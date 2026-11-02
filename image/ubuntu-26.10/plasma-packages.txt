@@ -1,0 +1,7 @@
+# Precompiled KDE phone interface alongside the existing GNOME session.
+plasma-mobile
+plasma-mobile-tweaks
+kubuntu-settings-desktop
+qmlkonsole
+dolphin
+iio-sensor-proxy

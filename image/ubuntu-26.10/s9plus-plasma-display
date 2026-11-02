@@ -1,0 +1,13 @@
+#!/bin/sh
+# Initialize the known phone panel to a usable scale in Plasma, once per user.
+[ "$XDG_CURRENT_DESKTOP" = KDE ] || exit 0
+marker="$HOME/.config/s9plus-plasma-display-initialized"
+[ -e "$marker" ] && exit 0
+for attempt in $(seq 1 30); do
+    if kscreen-doctor output.DSI-1.scale.3; then
+        touch "$marker"
+        exit 0
+    fi
+    sleep 2
+done
+exit 1
