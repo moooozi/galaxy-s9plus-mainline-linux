@@ -1,6 +1,6 @@
 # Fixes preserved from the installed SM-G965F
 
-Thirteen logical fixes were identified in the installation notes on 2026-11-02.
+Fourteen logical fixes were identified in the installation notes on 2026-11-02.
 The count groups paired settings corrections and hardware bring-up work by
 user-visible outcome; build-output ignore rules are additional housekeeping.
 
@@ -17,6 +17,8 @@ user-visible outcome; build-output ignore rules are additional housekeeping.
 11. Bring up speaker playback with matching ABOX modules and protected PipeWire output.
 12. Bring up the Bluetooth controller, discovery and ordered automatic startup.
 13. Restore S6E3HA8 side RAM and the rounded-corner mask after real panel sleep.
+14. Control MAX77705 charging through its actual MODE charge bit and correct inhibited status.
+    Hardware mode stop tested; corrected kernel not yet boot-tested; see charging.md.
 
 The Ubuntu 26.10 profile is under image/ubuntu-26.10. Experimental audio and
 Bluetooth sources are under experiments, with firmware supplied by the owner.

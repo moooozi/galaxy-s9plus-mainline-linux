@@ -7,7 +7,7 @@
  * Battery charger driver for MAXIM 77705 charger/power-supply.
  *
  * star2lte port: exposes POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR
- * (auto | inhibit-charge) wired to the charger's CHG_EN field, so userspace
+ * (auto | inhibit-charge) wired to CNFG_00's charging mode bit, so userspace
  * (for example a charge limiter) can stop and resume charging in hardware. This file
  * replaces the pristine upstream driver in apply_drivers.sh — re-check it
  * after rebasing onto a newer mainline tree.
@@ -109,11 +109,33 @@ static const struct regmap_irq_chip max77705_charger_irq_chip = {
 	.num_irqs		= ARRAY_SIZE(max77705_charger_irqs),
 };
 
+/* CNFG_09 CHG_EN selects input-current control; it does not stop charging.
+ * Samsung's MAX77705 driver stops mode 5 (buck+charger) by selecting mode 4
+ * (buck only). Update only CHG so USB power and all other mode bits survive.
+ */
+static int max77705_set_charging(struct max77705_charger_data *chg, bool enable)
+{
+	return regmap_update_bits(chg->regmap, MAX77705_CHG_REG_CNFG_00,
+				 MAX77705_CHG_MASK, enable ? MAX77705_CHG_MASK : 0);
+}
+
+static int max77705_get_charging(struct max77705_charger_data *chg, unsigned int *enabled)
+{
+	unsigned int mode;
+	int ret;
+
+	ret = regmap_read(chg->regmap, MAX77705_CHG_REG_CNFG_00, &mode);
+	if (ret)
+		return ret;
+	*enabled = !!(mode & MAX77705_CHG_MASK);
+	return 0;
+}
+
 static int max77705_charger_enable(struct max77705_charger_data *chg)
 {
 	int rv;
 
-	rv = regmap_field_write(chg->rfield[MAX77705_CHG_EN], 1);
+	rv = max77705_set_charging(chg, true);
 	if (rv)
 		dev_err(chg->dev, "unable to enable the charger: %d\n", rv);
 
@@ -125,7 +147,7 @@ static void max77705_charger_disable(void *data)
 	struct max77705_charger_data *chg = data;
 	int rv;
 
-	rv = regmap_field_write(chg->rfield[MAX77705_CHG_EN], MAX77705_CHG_DISABLE);
+	rv = max77705_set_charging(chg, false);
 	if (rv)
 		dev_err(chg->dev, "unable to disable the charger: %d\n", rv);
 }
@@ -181,8 +203,11 @@ static int max77705_get_charge_type(struct max77705_charger_data *chg, int *val)
 {
 	struct regmap *regmap = chg->regmap;
 	unsigned int reg_data, chg_en;
+	int ret;
 
-	regmap_field_read(chg->rfield[MAX77705_CHG_EN], &chg_en);
+	ret = max77705_get_charging(chg, &chg_en);
+	if (ret)
+		return ret;
 	if (!chg_en) {
 		*val = POWER_SUPPLY_CHARGE_TYPE_NONE;
 		return 0;
@@ -209,10 +234,13 @@ static int max77705_get_status(struct max77705_charger_data *chg, int *val)
 {
 	struct regmap *regmap = chg->regmap;
 	unsigned int reg_data, chg_en;
+	int ret;
 
-	regmap_field_read(chg->rfield[MAX77705_CHG_EN], &chg_en);
+	ret = max77705_get_charging(chg, &chg_en);
+	if (ret)
+		return ret;
 	if (!chg_en) {
-		*val = POWER_SUPPLY_CHARGE_TYPE_NONE;
+		*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		return 0;
 	}
 
@@ -402,6 +430,7 @@ static int max77705_chg_get_property(struct power_supply *psy,
 	struct max77705_charger_data *chg = power_supply_get_drvdata(psy);
 	struct regmap *regmap = chg->regmap;
 	unsigned int chg_en;
+	int ret;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
@@ -413,7 +442,9 @@ static int max77705_chg_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
 		return max77705_get_charge_type(chg, &val->intval);
 	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
-		regmap_field_read(chg->rfield[MAX77705_CHG_EN], &chg_en);
+		ret = max77705_get_charging(chg, &chg_en);
+		if (ret)
+			return ret;
 		val->intval = chg_en ? POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO :
 				       POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
 		return 0;
@@ -468,8 +499,7 @@ static int max77705_set_property(struct power_supply *psy,
 			err = max77705_charger_enable(chg);
 			break;
 		case POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE:
-			err = regmap_field_write(chg->rfield[MAX77705_CHG_EN],
-						 MAX77705_CHG_DISABLE);
+			err = max77705_set_charging(chg, false);
 			break;
 		default:
 			err = -EINVAL;
@@ -700,6 +730,11 @@ static int max77705_charger_probe(struct i2c_client *i2c)
 					"aicl-irq", chg);
 	if (ret)
 		return ret;
+
+	/* Retain the board's existing CNFG_09 input-current control selection. */
+	ret = regmap_field_write(chg->rfield[MAX77705_CHG_EN], 1);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to configure input current control\n");
 
 	ret = max77705_charger_enable(chg);
 	if (ret)
