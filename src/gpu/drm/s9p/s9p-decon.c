@@ -61,12 +61,16 @@
 #include <drm/drm_vblank.h>
 #include <linux/iopoll.h>
 
+#include "s9p-panel-self-mask.h"
+
 #define DRIVER_NAME "exynos"
 
 /* The framebuffer sboot scans out (its boot logo), from the port's DT. */
 #define S9P_SBOOT_FB_BASE	0xcc000000
 
 /* DECON0, 0x16030000 */
+#define DECON_GLOBAL_CONTROL             0x0000
+#define  DECON_IDLE_STATUS               BIT(5)
 #define DECON_INTERRUPT_ENABLE		0x0040
 #define  DECON_FRAME_START_INT_EN	BIT(12)
 #define  DECON_INT_EN			BIT(0)
@@ -125,6 +129,12 @@
 #define DSIM_PHYS			0x16080000
 #define DSIM_INTSRC			0x0050
 #define  DSIM_INTSRC_PH_FIFO_EMPTY	BIT(28)
+#define DSIM_PAYLOAD                    0x005c
+#define DSIM_FIFOCTRL                   0x0068
+#define  DSIM_FIFO_EMPTY                (BIT(10) | BIT(8))
+#define DSIM_RXFIFO                     0x0060
+#define  DSIM_RX_EMPTY                  BIT(12)
+#define  DSIM_RX_DONE                   BIT(18)
 #define DSIM_PKTHDR			0x0058
 #define  DSIM_PKTHDR_ID(x)		((x) << 0)
 #define  DSIM_PKTHDR_DATA0(x)		((x) << 8)
@@ -187,6 +197,8 @@ struct s9p_decon {
 	bool command_mode;		/* stock DT psr_mode=2: TE-driven */
 	bool hw_trigger;		/* stock DT trig_mode=0 */
 	bool enabled;
+	bool panel_asleep;
+	u32 mask_restores;
 	u32 inherited_trig_ctrl;
 	u32 inherited_path0;
 	u32 inherited_path1;
@@ -339,50 +351,238 @@ static void s9p_decon_disable_vblank(struct drm_simple_display_pipe *pipe)
 }
 
 /*
- * One DCS short write. The command FIFO is shared with the pixel path, so
- * the caller does this between frames; the status bit is cleared first and
- * then polled, exactly as the vendor driver does.
+ * All command sequences run with the TE trigger masked and DECON idle.
+ * The atomic modeset helpers serialize them with the driver's page flips.
+ * Do not reprogram the bootloader's DSIM/DSC clocks or lane configuration.
  */
-static void s9p_decon_dcs(struct s9p_decon *priv, u8 command)
+static int s9p_panel_commands_begin(struct s9p_decon *priv)
 {
-	u32 v;
+    u32 value;
+    int ret;
 
-	if (!priv->dsim || !s9p_panel_dcs)
-		return;
-	writel_relaxed(DSIM_INTSRC_PH_FIFO_EMPTY, priv->dsim + DSIM_INTSRC);
-	writel_relaxed(DSIM_PKTHDR_ID(MIPI_DCS_SHORT_WRITE) |
-		       DSIM_PKTHDR_DATA0(command) | DSIM_PKTHDR_DATA1(0),
-		       priv->dsim + DSIM_PKTHDR);
-	if (readl_poll_timeout_atomic(priv->dsim + DSIM_INTSRC, v,
-				      v & DSIM_INTSRC_PH_FIFO_EMPTY, 10, 20000))
-		dev_warn_once(priv->drm.dev,
-			      "panel did not take DCS %02x (INTSRC=%08x)\n",
-			      command, v);
+    if (!priv->dsim || !s9p_panel_dcs)
+        return -ENODEV;
+    value = readl(priv->decon + DECON_HW_SW_TRIG_CONTROL);
+    value |= DECON_HW_TRIG_EN | DECON_HW_TRIG_MASK_DECON;
+    writel(value, priv->decon + DECON_HW_SW_TRIG_CONTROL);
+    ret = readl_poll_timeout(priv->decon + DECON_GLOBAL_CONTROL, value,
+                            value & DECON_IDLE_STATUS, 250, 50000);
+    if (ret) {
+        dev_err(priv->drm.dev, "panel command: DECON did not become idle\n");
+        s9p_hw_trigger_unmask(priv);
+    }
+    return ret;
 }
 
-/*
- * Panel down: stop the emission, then power the controller down. The order
- * is the one the MIPI DCS specification gives -- set_display_off first, so
- * the panel does not latch a half-drawn frame, then enter_sleep_mode.
- */
+static int s9p_panel_write(struct s9p_decon *priv, const u8 *data, size_t len)
+{
+    u32 value, header;
+    size_t i, j;
+    int ret;
+
+    if (!len || len > 497)
+        return -EINVAL;
+    ret = readl_poll_timeout(priv->dsim + DSIM_FIFOCTRL, value,
+                            (value & DSIM_FIFO_EMPTY) == DSIM_FIFO_EMPTY,
+                            10, 20000);
+    if (ret)
+        goto fail;
+    writel(DSIM_INTSRC_PH_FIFO_EMPTY, priv->dsim + DSIM_INTSRC);
+    if (len == 1) {
+        header = MIPI_DCS_SHORT_WRITE | DSIM_PKTHDR_DATA0(data[0]);
+    } else {
+        /* Vendor commands, including two-byte ones, use DCS long writes.
+         * Samsung's SRAM path limits payload to 496 bytes plus command. */
+        for (i = 0; i < len; i += 4) {
+            value = 0;
+            for (j = 0; j < 4 && i + j < len; j++)
+                value |= (u32)data[i + j] << (8 * j);
+            writel(value, priv->dsim + DSIM_PAYLOAD);
+        }
+        header = 0x39 | DSIM_PKTHDR_DATA0(len);
+    }
+    writel(header, priv->dsim + DSIM_PKTHDR);
+    ret = readl_poll_timeout(priv->dsim + DSIM_INTSRC, value,
+                            value & DSIM_INTSRC_PH_FIFO_EMPTY, 10, 20000);
+    if (ret)
+        goto fail;
+    ret = readl_poll_timeout(priv->dsim + DSIM_FIFOCTRL, value,
+                            (value & DSIM_FIFO_EMPTY) == DSIM_FIFO_EMPTY,
+                            10, 20000);
+fail:
+    if (ret)
+        dev_err(priv->drm.dev, "panel command %02x timed out (%d)\n",
+                data[0], ret);
+    return ret;
+}
+
+#define s9p_panel_seq(priv, ...) ({                                  \
+    const u8 data[] = { __VA_ARGS__ };                               \
+    s9p_panel_write(priv, data, sizeof(data));                        \
+})
+
+/* DCS GET_POWER_MODE readback distinguishes true sleep from display-off.
+ * Caller holds the trigger masked with DECON idle, just like writes. */
+static int s9p_panel_power_mode(struct s9p_decon *priv)
+{
+    u32 value, header;
+    int i, ret;
+
+    for (i = 0; i < 64; i++) {
+        if (readl(priv->dsim + DSIM_FIFOCTRL) & DSIM_RX_EMPTY)
+            break;
+        readl(priv->dsim + DSIM_RXFIFO);
+    }
+    if (i == 64)
+        return -EIO;
+    writel(DSIM_RX_DONE | DSIM_INTSRC_PH_FIFO_EMPTY,
+           priv->dsim + DSIM_INTSRC);
+    /* Maximum return packet size: one byte. */
+    writel(0x37 | BIT(8), priv->dsim + DSIM_PKTHDR);
+    ret = readl_poll_timeout(priv->dsim + DSIM_INTSRC, value,
+                            value & DSIM_INTSRC_PH_FIFO_EMPTY, 10, 20000);
+    if (ret)
+        return ret;
+    writel(DSIM_INTSRC_PH_FIFO_EMPTY, priv->dsim + DSIM_INTSRC);
+    writel(BIT(24) | (0x0a << 8) | 0x06, priv->dsim + DSIM_PKTHDR);
+    ret = readl_poll_timeout(priv->dsim + DSIM_INTSRC, value,
+                            value & DSIM_RX_DONE, 10, 20000);
+    if (ret)
+        return ret;
+    header = readl(priv->dsim + DSIM_RXFIFO);
+    for (i = 0; i < 64; i++) {
+        if (readl(priv->dsim + DSIM_FIFOCTRL) & DSIM_RX_EMPTY)
+            break;
+        readl(priv->dsim + DSIM_RXFIFO);
+    }
+    if ((header & 0xff) != 0x21 || i == 64)
+        return -EIO;
+    return (header >> 8) & 0xff;
+}
+
+static int s9p_panel_restore_mask(struct s9p_decon *priv)
+{
+    u8 packet[497];
+    size_t offset, count;
+    int ret, lock_ret;
+
+    /* S6E3HA8 SELF_MASK_IMG_SEQ / SELF_MASK_ENA_SEQ, also used by the
+     * stock star2 AMB622NP01 panel. Side RAM is volatile across sleep.
+     * Preserve the corner mask by reloading it, rather than disabling it.
+     */
+    ret = s9p_panel_seq(priv, 0xf0, 0x5a, 0x5a);
+    if (ret)
+        goto lock;
+    ret = s9p_panel_seq(priv, 0x7a, 0x00);
+    if (ret)
+        goto lock;
+    /* Sleep loses the side-memory state. Reset its controller before the
+     * upload, using Samsung's S6E3HA8 INIT_SIDE_RAM and 34 ms delay.
+     * Reloading the image without this leaves the top/bottom bands. */
+    ret = s9p_panel_seq(priv, 0x77, 0x00, 0x00);
+    if (ret)
+        goto lock;
+    msleep(34);
+    ret = s9p_panel_seq(priv, 0x75, 0x10);
+    if (ret)
+        goto lock;
+    for (offset = 0; offset < sizeof(s9p_self_mask); offset += count) {
+        count = min_t(size_t, 496, sizeof(s9p_self_mask) - offset);
+        packet[0] = offset ? 0x5c : 0x4c;
+        memcpy(packet + 1, s9p_self_mask + offset, count);
+        ret = s9p_panel_write(priv, packet, count + 1);
+        if (ret)
+            goto lock;
+    }
+    ret = s9p_panel_seq(priv, 0x7a, 0x01, 0x00, 0x00, 0x00, 0x95,
+                        0x0a, 0xfa, 0x0b, 0x8f, 0x09, 0x0f,
+                        0x00, 0x00, 0x00, 0x00);
+lock:
+    lock_ret = s9p_panel_seq(priv, 0xf0, 0xa5, 0xa5);
+    if (!ret)
+        ret = lock_ret;
+    if (!ret) {
+        priv->mask_restores++;
+        dev_info(priv->drm.dev, "panel wake: restored self-mask (%u)\n",
+                 priv->mask_restores);
+    }
+    return ret;
+}
+
 static void s9p_panel_down(struct s9p_decon *priv)
 {
-	s9p_decon_dcs(priv, MIPI_DCS_SET_DISPLAY_OFF);
-	if (!s9p_panel_sleep)
-		return;
-	msleep(PANEL_FRAME_DELAY_MS);
-	s9p_decon_dcs(priv, MIPI_DCS_ENTER_SLEEP_MODE);
-	msleep(PANEL_SLEEP_DELAY_MS);
+    int mode;
+
+    if (s9p_panel_commands_begin(priv))
+        return;
+    if (s9p_panel_seq(priv, 0x9f, 0xa5, 0xa5))
+        goto out;
+    if (s9p_panel_seq(priv, MIPI_DCS_SET_DISPLAY_OFF))
+        goto lock;
+    if (s9p_panel_seq(priv, 0x9f, 0x5a, 0x5a))
+        goto out;
+    if (!s9p_panel_sleep)
+        goto out;
+    msleep(PANEL_FRAME_DELAY_MS);
+    if (s9p_panel_seq(priv, 0x9f, 0xa5, 0xa5))
+        goto out;
+    if (!s9p_panel_seq(priv, MIPI_DCS_ENTER_SLEEP_MODE)) {
+        priv->panel_asleep = true;
+        msleep(PANEL_SLEEP_DELAY_MS);
+        mode = s9p_panel_power_mode(priv);
+        if (mode >= 0 && !(mode & BIT(4)))
+            dev_info(priv->drm.dev, "panel asleep: power mode %02x\n", mode);
+        else
+            dev_err(priv->drm.dev, "panel sleep not verified: %d\n", mode);
+    }
+    /* Samsung leaves level 1 unlocked after sleep-in. */
+    goto out;
+lock:
+    s9p_panel_seq(priv, 0x9f, 0x5a, 0x5a);
+out:
+    /* Leave the TE trigger masked while blanked. Program-address on the
+     * next enable unmasks it after the panel is ready to receive frames. */
+    return;
 }
 
-/* Panel up: the reverse, with the boost converter's settling time. */
+/* Sleep-out reloads registers, but does not restore the volatile mask RAM. */
 static void s9p_panel_up(struct s9p_decon *priv)
 {
-	if (s9p_panel_sleep) {
-		s9p_decon_dcs(priv, MIPI_DCS_EXIT_SLEEP_MODE);
-		msleep(PANEL_SLEEP_DELAY_MS);
-	}
-	s9p_decon_dcs(priv, MIPI_DCS_SET_DISPLAY_ON);
+    int ret;
+
+    if (s9p_panel_commands_begin(priv))
+        return;
+    if (!priv->panel_asleep)
+        return;
+    ret = s9p_panel_seq(priv, 0x9f, 0xa5, 0xa5);
+    if (ret)
+        return;
+    ret = s9p_panel_seq(priv, MIPI_DCS_EXIT_SLEEP_MODE);
+    if (ret)
+        return;
+    msleep(PANEL_SLEEP_DELAY_MS);
+    s9p_panel_seq(priv, 0x9f, 0x5a, 0x5a);
+    priv->panel_asleep = false;
+    ret = s9p_panel_restore_mask(priv);
+    if (ret)
+        dev_err(priv->drm.dev, "panel mask restore failed: %d\n", ret);
+}
+
+static void s9p_panel_on(struct s9p_decon *priv)
+{
+    int mode;
+
+    if (!s9p_panel_commands_begin(priv)) {
+        if (!s9p_panel_seq(priv, 0x9f, 0xa5, 0xa5))
+            s9p_panel_seq(priv, MIPI_DCS_SET_DISPLAY_ON);
+        s9p_panel_seq(priv, 0x9f, 0x5a, 0x5a);
+        mode = s9p_panel_power_mode(priv);
+        if (mode >= 0 && (mode & (BIT(4) | BIT(2))) == (BIT(4) | BIT(2)))
+            dev_info(priv->drm.dev, "panel awake: power mode %02x\n", mode);
+        else
+            dev_err(priv->drm.dev, "panel wake not verified: %d\n", mode);
+    }
+    s9p_hw_trigger_unmask(priv);
 }
 
 /* ----------------------------------------------------------------- pipe */
@@ -406,6 +606,10 @@ static void s9p_decon_pipe_enable(struct drm_simple_display_pipe *pipe,
 	s9p_decon_program_address(priv, obj->dma_addr);
 	s9p_frame_start_irq_set(priv, true);
 	priv->enabled = true;
+	/* Fill the panel's frame memory before enabling visible emission. */
+	if (!s9p_wait_shadow_idle(priv))
+		msleep(PANEL_FRAME_DELAY_MS);
+	s9p_panel_on(priv);
 	drm_crtc_vblank_on(&pipe->crtc);
 }
 

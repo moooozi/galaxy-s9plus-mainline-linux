@@ -77,6 +77,7 @@ sed -i 's/\r$//' "$SRC/drivers/soc/samsung/s9p-acpm.c" \
 echo "--- display: DECON scanout takeover ---"
 mkdir -p "$SRC/drivers/gpu/drm/s9p"
 install -m644 "$PROJ/src/gpu/drm/s9p/s9p-decon.c" \
+	"$PROJ/src/gpu/drm/s9p/s9p-panel-self-mask.h" \
 	"$PROJ/src/gpu/drm/s9p/Kconfig" \
 	"$PROJ/src/gpu/drm/s9p/Makefile" "$SRC/drivers/gpu/drm/s9p/" || exit 1
 sed -i 's/\r$//' "$SRC/drivers/gpu/drm/s9p/s9p-decon.c" \
