@@ -1,8 +1,10 @@
 # build output
+/.build/
 /dist/
 /build-logs/
 *.o
 *.ko
 *.img
+/twrp-*.img.sha256
 __pycache__/
 *.pyc
