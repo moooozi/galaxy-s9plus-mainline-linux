@@ -87,6 +87,15 @@ if [ ! -f "$WORK/plasma-packages.done" ]; then
     cp -anl "$R"/var/cache/apt/archives/*.deb "$CACHE"/
     touch "$WORK/plasma-packages.done"
 fi
+if [ ! -f "$WORK/plasma-completion.done" ]; then
+    log 'Complete Plasma Mobile quick-settings dependencies'
+    pkgs=$(sed 's/#.*//' "$PROFILE/plasma-completion-packages.txt" | tr '\n' ' ')
+    in_chroot "$R" apt-get -o APT::Update::Error-Mode=any update
+    in_chroot "$R" apt-get -y --no-install-recommends install $pkgs
+    test -x "$R/usr/bin/plasma-open-settings"
+    rm -f "$WORK/finish-mobile.done" "$WORK/image-mobile.done"
+    touch "$WORK/plasma-completion.done"
+fi
 if [ ! -f "$WORK/configure-mobile.done" ]; then
     # The shared configure helper creates the user. Make that step resumable.
     if ! in_chroot "$R" id "$IMAGE_USER" >/dev/null 2>&1; then

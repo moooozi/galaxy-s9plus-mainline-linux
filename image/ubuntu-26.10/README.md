@@ -35,3 +35,10 @@ the verified reusable rootfs predates those additions.
 
 Original installed system: GNOME Shell 51.0, Plasma Mobile 6.7.5, Panfrost
 hardware compositing, 1440x2960 at approximately 60 Hz and scale 3.
+
+The separate plasma-completion stage installs the previously omitted recommended
+packages, including kde-cli-tools (`plasma-open-settings`), plasma-mobile-core,
+hfd-service, kio-extras and ksystemstats. It runs even when the initial Plasma
+package stage is already complete and invalidates final cleanup/image markers.
+The installed phone's package audit was clean and Wi-Fi settings launched after
+these additions; this does not establish haptic or cellular hardware support.

@@ -1,0 +1,8 @@
+# Additional packages installed live on 2026-11-02.
+# Use alongside the original Plasma package list for future images.
+plasma-mobile-core
+kde-cli-tools
+hfd-service
+kio-extras
+ksystemstats
+libspa-0.2-bluetooth
