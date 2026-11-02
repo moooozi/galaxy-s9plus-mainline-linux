@@ -102,6 +102,11 @@ tools, Firefox from Mozilla's signed DEB repository, fonts and portal support.
 Kernel FUSE is included for the document portal. Device voltage, display,
 watchdog, USB, storage and no-suspend settings are retained.
 
+Bootstrap runs in two stages even on the native ARM64 runner. Between stages,
+the builder replaces debootstrap's Docker-specific `/proc -> /proc` link with
+an empty directory: Rust coreutils aborts on the circular link before stage two
+can mount procfs. Bootstrap failures print the inner debootstrap diagnostics.
+
 KDE adds `plasma-mobile-core`, `kde-cli-tools`, hfd-service, KIO extras,
 ksystemstats, bluedevil, kscreen, Plasma Settings, networking and Polkit agents,
 Plasma Keyboard and basic KDE apps. The two outdated quick-setting module

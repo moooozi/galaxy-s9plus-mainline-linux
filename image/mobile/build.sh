@@ -38,9 +38,22 @@ trap chroot_umount EXIT
 # The generic Ubuntu debootstrap script is shared between suite aliases.
 bootstrap_script=/usr/share/debootstrap/scripts/stonking
 [ -e "$bootstrap_script" ] || bootstrap_script=/usr/share/debootstrap/scripts/resolute
-debootstrap --arch=arm64 --variant=minbase --include=ca-certificates \
+bootstrap_failed() {
+    tail -n 100 "$R/debootstrap/debootstrap.log" >&2 || true
+    die 'Ubuntu bootstrap failed (debootstrap diagnostics above)'
+}
+# Split stages even on native ARM64. In Docker, debootstrap leaves /proc ->
+# /proc after extraction. Rust coreutils then aborts on that circular link
+# before the second stage can mount procfs. An empty directory is safe.
+debootstrap --arch=arm64 --variant=minbase --include=ca-certificates --foreign \
     --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg \
-    stonking "$R" "$UBUNTU_MIRROR" "$bootstrap_script"
+    stonking "$R" "$UBUNTU_MIRROR" "$bootstrap_script" || bootstrap_failed
+if [ -L "$R/proc" ]; then
+    [ "$(readlink "$R/proc")" = /proc ] || die 'Unexpected bootstrap /proc symlink'
+    rm "$R/proc"
+fi
+mkdir -p "$R/proc"
+chroot "$R" /debootstrap/debootstrap --second-stage || bootstrap_failed
 chroot_mount "$R"
 copy_tree "$COMMON_DIR/rootfs" "$R"
 rm -f "$R/etc/apt/sources.list" "$R/etc/resolv.conf"
