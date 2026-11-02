@@ -167,6 +167,11 @@ if [ ! -f "$WORK/fuse-module.done" ]; then
     in_chroot "$R" depmod -a "$KREL"
     touch "$WORK/fuse-module.done"
 fi
+if [ ! -f "$WORK/settings-links.done" ]; then
+    python3 "$PROFILE/fix-mobile-settings-links.py" "$R"
+    rm -f "$WORK/finish-mobile.done" "$WORK/image-mobile.done"
+    touch "$WORK/settings-links.done"
+fi
 # Restore normal utility selection after the build-only acceleration.
 python3 - "$R" "$WORK/build-gnu-aliases.json" <<'PY_CLEAN'
 import json, os, sys

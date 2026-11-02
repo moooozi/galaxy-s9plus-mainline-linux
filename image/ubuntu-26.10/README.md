@@ -42,3 +42,9 @@ hfd-service, kio-extras and ksystemstats. It runs even when the initial Plasma
 package stage is already complete and invalidates final cleanup/image markers.
 The installed phone's package audit was clean and Wi-Fi settings launched after
 these additions; this does not establish haptic or cellular hardware support.
+
+`fix-mobile-settings-links.py` repairs Plasma 6.7 Night Color and keyboard quick
+settings to launch kcm_nightlight and kcm_virtualkeyboard. It accepts an offline
+rootfs or defaults to `/` on the target, retains original QML backups, and fails
+on unexpected commands. Package upgrades can overwrite the repairs; inspect
+module names before reapplying. The builder applies this in a separate stage.
