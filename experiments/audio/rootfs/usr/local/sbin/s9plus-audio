@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+# A crash while probing must not turn into an audio-triggered boot loop.
+state=/var/lib/s9plus-audio
+mkdir -p "$state"
+if [ -e "$state/loading" ]; then
+    echo 'Audio skipped: previous driver load did not finish. Inspect logs before removing /var/lib/s9plus-audio/loading.' >&2
+    exit 1
+fi
+[ -e /proc/asound/ZrnAbox ] && exit 0
+touch "$state/loading"
+sync
+modprobe i2c-gpio
+modprobe snd-zrn-abox cp_vss=0 capture=0
+test -e /proc/asound/ZrnAbox
+rm "$state/loading"
+sync

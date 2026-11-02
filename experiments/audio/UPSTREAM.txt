@@ -1,0 +1,7 @@
+Source: https://github.com/Zerone-Laboratories/ztOS
+Commit: 94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf
+Driver: audio/driver/snd-zrn-abox.c (GPL-2.0)
+The included driver is the locally adapted version built and tested on star2lte.
+Local changes disable cp_vss by default and retain conservative amplifier gains.
+The build/startup helpers are local; see README.md for installation and limits.
+No firmware or prebuilt modules are included.

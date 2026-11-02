@@ -1,0 +1,13 @@
+[Unit]
+Description=Galaxy S9+ experimental ABOX speaker driver
+After=local-fs.target
+ConditionPathExists=/lib/firmware/calliope_sram.bin
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/s9plus-audio
+RemainAfterExit=yes
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
