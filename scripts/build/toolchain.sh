@@ -2,7 +2,7 @@
 # One-time: the cross toolchain and host tools (Ubuntu 24.04 host), then the
 # static arm64 busybox for the initramfs. Nothing else is downloaded: the
 # boot image and the DTBH table are written by mkboot.py and mkdtbh.py.
-set -e
+set -eo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -10,7 +10,7 @@ apt-get install -y -qq --no-install-recommends \
   build-essential bc bison flex libssl-dev libelf-dev libncurses-dev \
   gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
   clang lld llvm \
-  device-tree-compiler python3 python3-pip git wget curl ca-certificates \
+  device-tree-compiler python3 python3-pip git wget curl ca-certificates gpgv ubuntu-keyring \
   debootstrap qemu-user-static binfmt-support \
   cpio gzip lz4 zstd xz-utils rsync kmod fakeroot \
   e2fsprogs dosfstools android-sdk-libsparse-utils 2>&1 | tail -5

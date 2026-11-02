@@ -1,0 +1,43 @@
+name: Mobile images
+on:
+  workflow_dispatch:
+    inputs:
+      rebuild_gnome:
+        description: Rebuild GNOME Mobile packages instead of reusing the matching cache
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'scripts/build/**'
+      - 'scripts/ci/**'
+      - 'device/**'
+      - 'image/**'
+      - 'experiments/**'
+      - 'firmware/**'
+      - 'bootloader/**'
+      - 'branding/**'
+      - '.github/workflows/**'
+permissions:
+  contents: read
+concurrency:
+  group: mobile-images-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  kernel:
+    uses: ./.github/workflows/mobile-kernel.yml
+  gnome-packages:
+    uses: ./.github/workflows/gnome-mobile.yml
+    with:
+      rebuild: ${{ inputs.rebuild_gnome == true }}
+  kde:
+    needs: kernel
+    uses: ./.github/workflows/mobile-rootfs.yml
+    with:
+      variant: kde
+  gnome:
+    needs: [kernel, gnome-packages]
+    uses: ./.github/workflows/mobile-rootfs.yml
+    with:
+      variant: gnome

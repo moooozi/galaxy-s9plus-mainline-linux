@@ -180,12 +180,14 @@ EOF
 	# A phone has no keyboard at the login screen: log the user in, like the
 	# reference phones do. The password still guards sudo, SSH and the lock screen.
 	mkdir -p "$R/etc/gdm3"
+	if [ "${IMAGE_DISPLAY_MANAGER:-gdm.service}" = gdm.service ]; then
 	cat > "$R/etc/gdm3/custom.conf" <<EOF
 [daemon]
 WaylandEnable=true
 AutomaticLoginEnable=true
 AutomaticLogin=$IMAGE_USER
 EOF
+	fi
 
 	if [ -n "$IMAGE_SSH_KEY" ]; then
 		install -d -m 700 "$R/home/$IMAGE_USER/.ssh"
@@ -214,9 +216,9 @@ EOF
 
 	# ssh.socket (Ubuntu's default) starts sshd on the first connection.
 	in_chroot "$R" systemctl enable first-boot-ssh-keys.service grow-rootfs.service \
-		NetworkManager.service ssh.socket gdm.service
+		NetworkManager.service ssh.socket "${IMAGE_DISPLAY_MANAGER:-gdm.service}"
 	mkdir -p "$R/etc/X11"
-	echo /usr/sbin/gdm3 > "$R/etc/X11/default-display-manager"
+	echo "${IMAGE_DISPLAY_MANAGER_EXEC:-/usr/sbin/gdm3}" > "$R/etc/X11/default-display-manager"
 	in_chroot "$R" systemctl set-default graphical.target
 	in_chroot "$R" dconf update
 }

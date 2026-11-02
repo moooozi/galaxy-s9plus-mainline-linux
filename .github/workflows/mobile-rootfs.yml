@@ -1,0 +1,59 @@
+name: Mobile root filesystem
+on:
+  workflow_call:
+    inputs:
+      variant:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    env:
+      VARIANT: ${{ inputs.variant }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate variant
+        run: |
+          case "$VARIANT" in kde|gnome) ;; *) exit 1 ;; esac
+      - uses: actions/download-artifact@v4
+        with:
+          name: s9plus-kernel
+          path: .build/inputs/kernel
+      - uses: actions/download-artifact@v4
+        if: inputs.variant == 'gnome'
+        with:
+          name: gnome-mobile-packages
+          path: .build/inputs/gnome
+      - name: Assemble the selected single-shell image
+        run: |
+          set -o pipefail
+          docker run --privileged --rm -v "$PWD:/work" -w /work -e VARIANT ubuntu:26.10 bash -ec '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends debootstrap ubuntu-keyring e2fsprogs \
+              openssl python3 kmod zstd ca-certificates
+            bash image/mobile/build.sh "$VARIANT"
+          ' 2>&1 | tee /tmp/mobile-image.log
+      - name: Verify compressed image and package checksums
+        run: |
+          cd "dist/$VARIANT-mobile"
+          sha256sum -c SHA256SUMS
+          zstd -t s9plus-rootfs.img.zst
+      - name: Upload installable image bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: s9plus-${{ inputs.variant }}-mobile
+          path: dist/${{ inputs.variant }}-mobile/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.variant }}-mobile-failure-log
+          path: /tmp/mobile-image.log
+          if-no-files-found: ignore

@@ -1,0 +1,38 @@
+name: Galaxy S9+ kernel
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve the newest supported 7.3 patch once
+        run: |
+          mkdir -p dist
+          python3 scripts/ci/resolve-kernel.py > dist/kernel-selection.json
+          cat dist/kernel-selection.json
+      - name: Build kernel, modules and uniLoader BOOT
+        run: |
+          set -o pipefail
+          docker run --privileged --rm -v "$PWD:/work" -w /work ubuntu:24.04 \
+            bash scripts/ci/build-mobile-kernel.sh 2>&1 | tee /tmp/mobile-kernel.log
+      - name: Verify outputs
+        run: cd dist/mobile-kernel && sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s9plus-kernel
+          path: dist/mobile-kernel/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-kernel-failure-log
+          path: /tmp/mobile-kernel.log
+          if-no-files-found: ignore

@@ -24,8 +24,10 @@ def main():
         raise RuntimeError('Invalid phone Bluetooth address')
     if MARKER.exists():
         raise RuntimeError('Previous bring-up did not finish; inspect logs before clearing ' + str(MARKER))
-    if os.uname().release != '7.1.0-dirty':
-        raise RuntimeError('These modules require kernel 7.1.0-dirty')
+    release = os.uname().release
+    module_release = run('modinfo', '-F', 'vermagic', 'zrn-bt').split()[0]
+    if module_release != release:
+        raise RuntimeError(f'Bluetooth module is for {module_release}, running {release}')
     baseline = run('dmesg').count(QUIRK)
     MARKER.write_text('Bluetooth initialization started\n')
     run('modprobe', 'hci_uart')

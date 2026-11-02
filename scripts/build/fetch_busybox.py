@@ -20,6 +20,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -33,9 +34,40 @@ def fetch(url):
         return r.read()
 
 
+def verify_index(release, index, path):
+    """Check compressed index bytes against the authenticated Release payload."""
+    in_sha256 = False
+    for line in release.splitlines():
+        if line == 'SHA256:':
+            in_sha256 = True
+            continue
+        if in_sha256 and not line.startswith(' '):
+            break
+        if in_sha256:
+            digest, size, name = line.split()
+            if name == path:
+                if len(index) != int(size) or hashlib.sha256(index).hexdigest() != digest:
+                    raise ValueError('Ubuntu package index checksum mismatch')
+                return
+    raise ValueError(f'Ubuntu signed Release has no SHA256 for {path}')
+
+
+def authenticated_index(suite):
+    path = 'main/binary-arm64/Packages.gz'
+    with tempfile.TemporaryDirectory(prefix='s9plus-busybox-') as directory:
+        signed = Path(directory) / 'InRelease'
+        release = Path(directory) / 'Release'
+        signed.write_bytes(fetch(f'{MIRROR}/dists/{suite}/InRelease'))
+        subprocess.run(['gpgv', '--keyring', '/usr/share/keyrings/ubuntu-archive-keyring.gpg',
+                        '--output', str(release), str(signed)], check=True)
+        index = fetch(f'{MIRROR}/dists/{suite}/{path}')
+        verify_index(release.read_text(), index, path)
+    return gzip.decompress(index)
+
+
 def find_package():
     for suite in SUITES:
-        index = gzip.decompress(fetch(f"{MIRROR}/dists/{suite}/main/binary-arm64/Packages.gz"))
+        index = authenticated_index(suite)
         for stanza in index.decode("utf-8", "replace").split("\n\n"):
             fields = dict(line.split(": ", 1) for line in stanza.splitlines()
                           if ": " in line and not line.startswith(" "))

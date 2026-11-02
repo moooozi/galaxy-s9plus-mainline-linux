@@ -1,0 +1,51 @@
+{
+  "suite": "stonking",
+  "version": "51.1.mobile.22",
+  "debian_version": "1:51.1.mobile.22-0s9plus1",
+  "components": [
+    {
+      "name": "gnome-settings-daemon",
+      "url": "https://gitlab.gnome.org/verdre/gnome-settings-daemon-mobile.git",
+      "commit": "bbb6997c79ce8dce5eb17fe4d93ab6b77dad5e93",
+      "ubuntu_source_version": "51.0-1ubuntu1"
+    },
+    {
+      "name": "mutter",
+      "url": "https://gitlab.gnome.org/verdre/mutter-mobile.git",
+      "commit": "7e7b25f68c7719ebf3b651808824e0c8bd33020d",
+      "ubuntu_source_version": "51.0-1ubuntu3"
+    },
+    {
+      "name": "gnome-shell",
+      "url": "https://gitlab.gnome.org/verdre/gnome-shell-mobile.git",
+      "commit": "c602286053f9e06b3493decb4a9dabe8ba20ad9c",
+      "ubuntu_source_version": "51.0-2ubuntu3"
+    }
+  ],
+  "subprojects": [
+    {
+      "parent": "gnome-settings-daemon",
+      "path": "subprojects/gvc",
+      "url": "https://gitlab.gnome.org/GNOME/libgnome-volume-control.git",
+      "commit": "0a4eda0cdc2deb352bebc70ec697c42af46094e4"
+    },
+    {
+      "parent": "mutter",
+      "path": "subprojects/gvdb",
+      "url": "https://gitlab.gnome.org/GNOME/gvdb.git",
+      "commit": "b54bc5da25127ef416858a3ad92e57159ff565b3"
+    },
+    {
+      "parent": "gnome-shell",
+      "path": "subprojects/gvc",
+      "url": "https://gitlab.gnome.org/GNOME/libgnome-volume-control.git",
+      "commit": "0a4eda0cdc2deb352bebc70ec697c42af46094e4"
+    },
+    {
+      "parent": "gnome-shell",
+      "path": "subprojects/libshew",
+      "url": "https://gitlab.gnome.org/GNOME/libshew.git",
+      "commit": "d16afc40412b565d2bbecf80335f54a19a978009"
+    }
+  ]
+}

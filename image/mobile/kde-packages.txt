@@ -1,0 +1,23 @@
+# plasma-mobile-core includes the shell's recommended integration packages.
+plasma-mobile
+plasma-mobile-core
+plasma-mobile-tweaks
+plasma-keyboard
+kde-cli-tools
+plasma-settings
+hfd-service
+kio-extras
+ksystemstats
+bluedevil
+kscreen
+kde-config-screenlocker
+systemsettings
+xdg-desktop-portal-kde
+qmlkonsole
+dolphin
+kate
+ark
+sddm
+sddm-theme-breeze
+plasma-nm
+polkit-kde-agent-1

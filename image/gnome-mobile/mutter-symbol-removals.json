@@ -1,0 +1,10 @@
+{
+  "meta_window_override_constraints@Base 44~rc-1ubuntu2": "Ubuntu tiling patch omitted with the rest of Ubuntu's downstream patches",
+  "clutter_text_get_ellipsize_line@Base 51~alpha": "Ubuntu multiline app-label patch omitted; mobile Shell does not use it",
+  "clutter_text_set_ellipsize_line@Base 51~alpha": "Ubuntu multiline app-label patch omitted; mobile Shell does not use it",
+  "clutter_frame_clock_notify_ready@Base 43.0": "Mobile frame lifecycle uses clutter_frame_clock_notify_discarded",
+  "clutter_stage_view_notify_ready@Base 43.0": "Mobile frame lifecycle uses clutter_stage_view_notify_discarded",
+  "cogl_frame_info_get_is_symbolic@Base 43.0": "Mobile frame lifecycle uses cogl_frame_info_get_is_discarded",
+  "clutter_stage_get_grab_chrome@Base 51~beta": "Mobile grab API uses get_grab_chrome_for_actor with add/remove_grab_chrome",
+  "clutter_stage_set_grab_chrome@Base 51~beta": "Mobile grab API uses get_grab_chrome_for_actor with add/remove_grab_chrome"
+}

@@ -1,148 +1,135 @@
-# Installing
+# Install a mobile image
 
-## What has to be true first
+For the **Exynos Galaxy S9+ SM-G965F (star2lte)**, with an unlocked bootloader
+and working TWRP already installed. These instructions start from TWRP; they do
+not cover bootloader unlocking or installing recovery.
 
-1. **Bootloader unlocked** and `KG STATE: Normal` in download mode.
-2. **TWRP 3.3.1-0 for star2lte on `RECOVERY`.**
-3. `adb` on the host (Android platform-tools). The flash scripts find the S9+
-   by its product name; with more than one on the bus, set `S9PLUS_SERIAL`.
+Flashing USERDATA replaces the installed operating system and its user data.
+RECOVERY, bootloader, modem, VENDOR and EFS are not written by these helpers.
 
-### KG STATE: Prenormal blocks everything
+## Download one bundle
 
-In that state the bootloader accepts an Odin session and then refuses every
-partition operation. Two independent tools fail at exactly the same point, so
-it is not a tool bug:
+Open [Mobile images](https://github.com/moooozi/galaxy-s9plus-mainline-linux/actions/workflows/mobile-images.yml),
+select a successful run, then download one artifact:
 
-| Tool | gets to | fails with |
-|---|---|---|
-| Thor 1.1.0 | `Successfully began an Odin session!` | `flashTar` → `Failed to bulk read: Connection timed out (110)` |
-| Heimdall 1.4.2 | `Session begun.` | `ERROR: Failed to receive PIT file size!` |
+| Artifact | User interface |
+| --- | --- |
+| `s9plus-kde-mobile` | KDE Plasma Mobile, using Ubuntu packages |
+| `s9plus-gnome-mobile` | GNOME Mobile: matching mobile Shell, Mutter and Settings Daemon builds |
 
-`OEM LOCK: OFF` only means the developer-options switch is set. What matters
-is `KG STATE`.
+Each bundle contains `boot-s9plus.img`, `s9plus-rootfs.img.zst`, `SHA256SUMS`,
+package/kernel manifests and these instructions. The GNOME bundle also records
+its mobile source commits. These are separate images; the old combined
+Plasma + GNOME Desktop image is a historical build.
 
-**How it was cleared on this device:** boot Android, correct the device clock,
-give it internet (USB tethering works), and leave it online. Knox Guard went
-to `Checking` and the bootloader started accepting writes. The seven days
-Samsung nominally wants were not needed.
+Use BOOT and rootfs **from the same bundle**. The rootfs carries modules for
+that exact kernel. A newer build may use a newer 7.3.x patch release.
+The first workflow run must succeed before these download artifacts exist.
+A generated image still needs device testing; CI cannot exercise this phone's
+panel, GPU, audio or Bluetooth hardware.
 
-## What you flash
+## Verify and flash
 
-Two pieces, both built from this repository ([02-building.md](02-building.md)):
-
-| Partition | Image | Built by |
-|---|---|---|
-| `BOOT` (`/dev/block/sda10`) | `dist/uniloader/<name>.img` — uniLoader + kernel + device tree | `scripts/build/build_stable.sh` + `pack_uniloader.sh` |
-| `USERDATA` (`/dev/block/sda25`) | `dist/image/s9plus-rootfs.img` — the Ubuntu root filesystem | `image/build-image.sh` |
-
-`RECOVERY` keeps TWRP. **Flashing USERDATA replaces all Android user data.**
-
-## Flashing
-
-Everything after the initial TWRP install goes over **TWRP + adb**, not Odin.
-Boot the phone into TWRP (Power + Volume-Up + Bixby), cable in:
+On a Linux host with Python 3, `adb`, `unzip` and `zstd` installed:
 
 ```bash
-# the root filesystem (resumable, every chunk checked, then read back whole)
-python scripts/flash/flash_s9plus_rootfs_adb.py dist/image/s9plus-rootfs.img
+git clone https://github.com/moooozi/galaxy-s9plus-mainline-linux.git
+cd galaxy-s9plus-mainline-linux
 
-# the kernel: the uniLoader-wrapped image (a raw m71-*/boot.img does not boot)
-python scripts/flash/flash_s9plus_boot_adb.py dist/uniloader/<name>.img
+# Example: use the KDE artifact. Substitute gnome-mobile for the GNOME bundle.
+mkdir -p dist/kde-mobile
+unzip ~/Downloads/s9plus-kde-mobile.zip -d dist/kde-mobile
+(cd dist/kde-mobile && sha256sum -c SHA256SUMS && zstd -d s9plus-rootfs.img.zst)
 ```
 
-The boot script reboots when BOOT reads back correctly.
+Boot the phone into its existing TWRP and connect USB. Confirm that `adb`
+shows the intended phone in recovery, then use its serial explicitly:
 
-> TWRP's `adbd` accepts `exec-in` but **discards the stream**. The rootfs
-> therefore goes over `adb push` in 128 MiB chunks into `/tmp` and is written
-> with `dd seek=`, each chunk compared against the partition first. That makes
-> the whole run idempotent and resumable — which matters, because the Windows
-> adb server reliably drops out during long transfers.
+```bash
+adb devices -l
+export S9PLUS_SERIAL='<serial shown by adb>'
 
-### Odin, if you ever need it
+# TWRP may mount USERDATA automatically. Both aliases must be unmounted.
+adb -s "$S9PLUS_SERIAL" shell 'twrp unmount /data; twrp unmount /sdcard'
 
-`TWRP_IMG=<twrp image> scripts/flash/mk_twrp_tar.sh` builds the smallest
-possible Odin package: TWRP for `RECOVERY` only. That is the one write that
-matters, because sboot keeps the recovery flag it was once given.
+# Write and verify USERDATA before changing BOOT.
+python3 scripts/flash/flash_s9plus_rootfs_adb.py dist/kde-mobile/s9plus-rootfs.img
 
-Odin-path traps that cost time:
+# Write the matching uniLoader BOOT image. This reboots after verification.
+python3 scripts/flash/flash_s9plus_boot_adb.py dist/kde-mobile/boot-s9plus.img
+```
 
-* The device gives **one Odin handshake per download-mode entry**. Every test
-  run uses it up; after that only a power cycle helps.
-* `Thor-Windows.exe` cannot flash at all ("A USB handler wasn't written for
-  your platform") — only the Linux binary can, over `usbipd-win`.
-* Thor needs a real pty **with the window size set**, or Spectre.Console wraps
-  after every single character.
-* Blacklist `cdc_acm`; unloading it mid-session tears down the usbip link.
-* Longer USB timeouts do **not** fix the PIT problem.
+The helpers verify star2lte identity, root recovery access, exact partition
+mapping and capacity. Rootfs writes are resumable and checksum-verified per
+chunk and in full, followed by a filesystem check. BOOT is read back in full
+before rebooting. If the rootfs helper reports mounted USERDATA, inspect and
+unmount the remaining TWRP mounts before retrying; do not bypass the check.
+Do not flash a raw kernel Image or a raw `m71-*/boot.img` in place of uniLoader.
 
 ## First boot
 
-* The root filesystem grows to the whole of USERDATA and the phone creates
-  its own SSH host keys; then GDM logs your user in, GNOME on Wayland.
-* The user and password are the ones you gave the image build; root is
-  locked (use `sudo`), and root can never log in over SSH.
-* **USB network:** the phone takes `172.16.42.2` (and also asks for DHCP). Give
-  the PC's new USB network adapter the address `172.16.42.1/24`, then
-  `ssh <user>@172.16.42.2`. The link is only between the phone and that PC.
-* The same cable is also a serial console (a `getty` on `ttyGS0`, a COM port on
-  the PC).
-* Wi-Fi: from the GNOME menu, like on any laptop.
+The root filesystem expands to fill USERDATA, new SSH host keys are generated,
+and the selected mobile interface logs in automatically. KDE uses SDDM;
+GNOME Mobile uses GDM. Initial display scale is 3 on the 1440x2960 panel.
+GNOME Mobile gets handset chassis identification and its built-in mobile
+keyboard; KDE gets Plasma Keyboard and the settings launchers/dependencies.
 
-## What the image adds for this phone
+The published development images use **user `ubuntu`, password `changeme`**.
+Change it with `passwd` after installation. Root login is locked; use `sudo`.
+Local builds can supply `IMAGE_PASSWORD`, `IMAGE_USER` and the common image
+settings instead. Public workflows contain no personal credentials or SSH keys.
 
-`device/base/` is everything the image carries on top of the common base
-system ([`image/common/README.md`](../image/common/README.md)), and
-`device/configure.sh` enables it. Only what the hardware needs:
+USB networking exposes the phone at `172.16.42.2`. Configure the host's USB
+network adapter as `172.16.42.1/24`, then:
 
-| | |
-|---|---|
-| `usb-gadget` + `usb-gadget.service` | USB serial console (ACM) and network (NCM, ECM/RNDIS as fallbacks) |
-| `NetworkManager/…/usb0.nmconnection` | the phone's side of the USB network |
-| `s9p-touch-power` + service | lifts the charger input limit from 375 mA (what TWRP leaves) to 500 mA. The touch rails and the GPU rail are set by the kernel (`s9p-acpm`, `s9p-g3d`) |
-| `s9p-stability` + service | keeps the idle-only voltage reductions off (see [06-known-issues.md](06-known-issues.md)) |
-| `s9p-wifi-guard` + service | brings Wi-Fi back after NetworkManager gave up on a failed rekey |
-| `hciattach-bcm4361.service` + `brcm/bcm4361B2_semco.hcd` | Bluetooth attach, **installed but not enabled**: the kernel is built without Bluetooth |
-| `brcm/brcmfmac4361-pcie.*` | Wi-Fi firmware on disk too (the stable kernel has it built in) |
-| `logind.conf.d`, `sleep.conf.d`, masked sleep targets | no suspend: the big cores do not come back from it |
-| `system.conf.d/s9p-watchdog.conf` | systemd feeds the hardware watchdog (`RuntimeWatchdogSec=30s`) |
-| `gdm.service.d/10-wait-for-render-node.conf` | GDM waits for the GPU's render node |
-| `PAN_MAX_AFBC_PACKING_RATIO=0` in `/etc/environment` | Mesa texture fix, see below |
+```bash
+ssh ubuntu@172.16.42.2
+```
 
-Everything else — power profiles, the flight recorder, the apt proxy over
-USB, the bring-up tools — is in [`extras/`](../extras/) and only installed
-when you ask for it.
+For internet over USB, enable connection sharing on that host adapter; merely
+assigning an address does not provide routing or DNS. A reinstall changes the
+phone's SSH host key. Verify it through the physical device/serial console
+before replacing the old entry. The cable also exposes a `ttyGS0` serial login.
+Wi-Fi can be configured through the selected shell's network settings.
 
-Two userland settings that are easy to get wrong:
+## Speaker firmware and Bluetooth identity
 
-* **`PAN_MAX_AFBC_PACKING_RATIO=0` must be in `/etc/environment`** (the image
-  build adds it). Without it icons and glyphs show 16-pixel horizontal
-  dashes. `/etc/environment.d/` does **not** reach `gnome-shell`;
-  `/etc/environment` (pam_env) does.
-* **`LIBGL_ALWAYS_SOFTWARE=1` must not be anywhere** (`/etc/environment`,
-  `gdm3.service.d`) or every client silently gets llvmpipe. The user must be
-  in the `render` group (the image build does that).
+Both images include the matching experimental speaker/Bluetooth modules,
+services and protected PipeWire speaker output. The public images do not carry
+this owner's audio firmware or Bluetooth address.
 
-> When you change either and want to measure the result, run
-> `loginctl terminate-user <user>` before restarting GDM. The `systemd --user`
-> manager keeps its environment across `systemctl restart gdm`, and a stale
-> value has survived three measurements that way.
+For speaker playback, supply `calliope_sram.bin`, `calliope_dram.bin` and
+`calliope_iva.bin` from **your phone's VENDOR partition** under
+`/usr/lib/firmware/`. You can copy them out from an existing installation or
+locate them in TWRP with VENDOR mounted read-only. Do not format VENDOR.
+Then run `sudo systemctl start s9plus-audio.service` and reboot to initialize
+the desktop audio graph. The protected `s9plus-speaker` output is the default;
+retain its high-pass filter, crossover, limiter and conservative driver gains.
 
-## If it does not come up
+For Bluetooth, write **your phone's own EFS Bluetooth address**, in colon-separated
+hex format, to `/var/lib/s9plus-bluetooth/bt_addr`. Keep its directory mode 0700,
+file mode 0600 and ownership root:root. Then reboot. The board firmware symlink
+and service ordering are already configured. Do not copy another device's address
+or unload/re-register the board UART within the same boot.
 
-1. **Black, no USB** → wrong DTB or a kernel panic. Download mode is in ROM,
-   not in `boot`, so it is still reachable. Flash a known-good `boot.img`
-   back, or reach TWRP with Power + VolUp + Bixby.
-2. **Boot log on the panel, then nothing** → read the ramoops window from
-   TWRP; the kernel's console zone is at `0x4000` of `0x8000@0xfed10000` and
-   TWRP shows it as `pmsg-ramoops-0`. Read the **end** of it.
-3. **Serial console, rescue shell** → kernel is fine, the rootfs is missing or
-   broken. Reflash `s9plus-rootfs.img`.
+Services skip automatic initialization while the required owner-supplied files
+are absent. Failed initialization leaves a `loading` marker under the service's
+`/var/lib/s9plus-*` directory. Inspect the logs before clearing it; this prevents
+repeated probing after a crash. Detailed provenance and limits:
+[Audio](https://github.com/moooozi/galaxy-s9plus-mainline-linux/tree/main/experiments/audio),
+[Bluetooth](https://github.com/moooozi/galaxy-s9plus-mainline-linux/tree/main/experiments/bluetooth).
 
-The kernel's init arms Samsung's recovery magic in the PMU before it does
-anything else (`INFORM2 = 0x12345678`, `INFORM3 = 0x12345674`), so a panic,
-the init's own deadman timer, or any later reset comes up **in TWRP** rather
-than in the same kernel again.
+## Recovery and limits
 
-> The inverse layout — TWRP on `BOOT`, the test kernel on `RECOVERY` — looks
-> safer and is not: the recovery key combo then lands in the *test* kernel,
-> which is exactly what someone reaches for when the phone looks dead.
+If the new system does not boot, return to the existing TWRP and flash a saved
+working **uniLoader** BOOT/rootfs pair. Keep RECOVERY available throughout.
+The port's watchdog may return a failed warm boot to TWRP; inspect pstore and
+serial logs before repeating the flash. For a kernel-only rollback, keep the
+old kernel's matching modules in the rootfs.
+
+Suspend, cameras, cellular/call audio, microphones and headphones are not
+established by these builds. Experimental speaker playback and Bluetooth
+controller/discovery were tested on the development phone; Bluetooth pairing
+and audio streaming still need verification. Sporadic Panfrost faults also
+remain. GNOME Mobile and the new SDDM image need their own visual/input testing;
+a successful workflow is not a device-validation result.

@@ -1,0 +1,9 @@
+gnome-settings-daemon
+gnome-settings-daemon-common
+mutter
+mutter-common
+mutter-common-bin
+libmutter-51-0
+gir1.2-mutter-51
+gnome-shell
+gnome-shell-common

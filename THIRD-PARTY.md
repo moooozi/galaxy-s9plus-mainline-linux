@@ -14,3 +14,20 @@
 
 The firmware blobs are device firmware, not part of the kernel's own source.
 They are included so `WLAN=1` builds do not race a firmware loader at boot.
+
+## Mobile build additions
+
+- S6E3HA8 corner-mask image: Samsung GPL-2.0 panel source, with original notice
+  retained in `src/gpu/drm/s9p/s9p-panel-self-mask.h`.
+  Provenance and verified commands are in `docs/panel-sleep-wake.md`.
+- Experimental ABOX and Bluetooth board drivers: Zerone-Laboratories/ztOS at
+  `94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf`, GPL-2.0; local adaptations are
+  documented in `experiments/audio` and `experiments/bluetooth`.
+- GNOME Mobile Shell and Mutter: GPL-2.0-or-later; Settings Daemon also contains
+  LGPL components. Source/license notices are retained in the corresponding
+  source archives. Exact fork URLs, commits and Ubuntu packaging versions are
+  recorded in `image/gnome-mobile/sources.json`. These sources are fetched at
+  build time; binary package artifacts include their corresponding source.
+- Owner-specific Calliope audio firmware and Bluetooth identity are not
+  distributed in public images. Existing board Wi-Fi/Bluetooth firmware remains
+  subject to the firmware attribution above.

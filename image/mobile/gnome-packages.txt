@@ -1,0 +1,16 @@
+# These stock stack packages are replaced by the locked mobile .debs.
+gnome-shell
+gnome-session
+gnome-settings-daemon
+gnome-control-center
+gnome-terminal
+nautilus
+gnome-text-editor
+gnome-system-monitor
+gnome-keyring
+xdg-desktop-portal-gnome
+gnome-backgrounds
+fonts-cantarell
+gvfs-backends
+gvfs-fuse
+gdm3

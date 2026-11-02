@@ -1,3 +1,9 @@
+> This page preserves the earlier kernel/Ubuntu 24.04 build procedure.
+> For the current separate Ubuntu 26.10 KDE/GNOME Mobile pipelines, use
+> [08-image-pipelines.md](08-image-pipelines.md) and
+> [image/mobile/README.md](../image/mobile/README.md).
+> New image builds resolve the latest supported 7.3.x patch rather than 7.1.
+
 # Building
 
 ## Build host
