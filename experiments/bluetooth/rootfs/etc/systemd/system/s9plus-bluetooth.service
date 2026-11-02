@@ -1,0 +1,12 @@
+[Unit]
+Description=Galaxy S9+ Bluetooth UART and controller initialization
+Before=bluetooth.service
+
+[Service]
+Type=notify
+ExecStart=/usr/local/sbin/s9plus-bluetooth
+TimeoutStartSec=155
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

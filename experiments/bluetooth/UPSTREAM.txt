@@ -1,0 +1,9 @@
+Source: https://github.com/Zerone-Laboratories/ztOS
+Commit: 94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf
+Driver: bluetooth/driver/zrn-bt.c (GPL-2.0), compiled from source.
+patch-btbcm-s9plus.py adapts bluetooth/patch-btbcm.py, extending the quirk
+and 3 Mbaud board check to samsung,star2lte in an isolated source copy.
+No upstream binary modules are used. Firmware comes from the owner's phone.
+Startup scripts/services are local replacements with setup ordering,
+verified EFS address, and persistent failed-initialization marker.
+Suspend remains disabled; sleep_hook=0 is explicit.

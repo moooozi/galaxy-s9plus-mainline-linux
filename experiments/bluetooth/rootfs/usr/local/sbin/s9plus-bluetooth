@@ -1,0 +1,96 @@
+#!/usr/bin/python3
+"""Attach the S9+ UART controller, then let BlueZ use its verified identity."""
+import os
+from pathlib import Path
+import re
+import signal
+import socket
+import subprocess
+import time
+
+STATE = Path('/var/lib/s9plus-bluetooth')
+MARKER = STATE / 'loading'
+QUIRK = 'hci0: HCI Read Transmit Power Level command is advertised'
+
+
+def run(*args):
+    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
+
+
+def main():
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    address = (STATE / 'bt_addr').read_text().strip().upper()
+    if not re.fullmatch(r'(?:[0-9A-F]{2}:){5}[0-9A-F]{2}', address):
+        raise RuntimeError('Invalid phone Bluetooth address')
+    if MARKER.exists():
+        raise RuntimeError('Previous bring-up did not finish; inspect logs before clearing ' + str(MARKER))
+    if os.uname().release != '7.1.0-dirty':
+        raise RuntimeError('These modules require kernel 7.1.0-dirty')
+    baseline = run('dmesg').count(QUIRK)
+    MARKER.write_text('Bluetooth initialization started\n')
+    run('modprobe', 'hci_uart')
+    run('modprobe', 'zrn-bt', 'sleep_hook=0')
+    ttys = []
+    for _ in range(40):
+        ttys = list(Path('/sys/devices/platform/exynos850-uart.0').glob('**/ttySAC*'))
+        if ttys:
+            break
+        time.sleep(0.25)
+    if not ttys:
+        raise RuntimeError('Bluetooth UART did not appear')
+    tty = '/dev/' + ttys[0].name
+    child = subprocess.Popen(['btattach', '-B', tty, '-P', 'bcm', '-S', '115200'])
+
+    def stop(signum, frame):
+        child.terminate()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    try:
+        # Query only the kernel log during firmware download. Early management
+        # requests can prevent this controller from ever registering.
+        for _ in range(90):
+            if child.poll() is not None:
+                raise RuntimeError('btattach exited during firmware setup')
+            if run('dmesg').count(QUIRK) > baseline:
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError('Controller firmware setup timed out')
+        time.sleep(5)
+        for _ in range(20):
+            if 'hci0:' in run('btmgmt', 'info'):
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError('Controller did not register')
+        print(run('btmgmt', '-i', 'hci0', 'power', 'off'), flush=True)
+        print(run('btmgmt', '-i', 'hci0', 'public-addr', address), flush=True)
+        # Setting the public address removes and re-adds the management
+        # index asynchronously. Keep btattach alive through that transition.
+        for _ in range(30):
+            info = run('btmgmt', '-i', 'hci0', 'info')
+            if address in info.upper():
+                break
+            if child.poll() is not None:
+                raise RuntimeError('btattach exited while setting the address')
+            time.sleep(1)
+        else:
+            raise RuntimeError('Controller address verification failed: ' + info)
+        print(info, flush=True)
+        MARKER.unlink()
+        notify_path = os.environ.get('NOTIFY_SOCKET')
+        if notify_path:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+                sock.connect('\0' + notify_path[1:] if notify_path.startswith('@') else notify_path)
+                sock.sendall(b'READY=1\nSTATUS=Bluetooth firmware and phone address ready')
+        raise SystemExit(child.wait())
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.wait(timeout=5)
+
+
+if __name__ == '__main__':
+    main()
