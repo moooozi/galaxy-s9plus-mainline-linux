@@ -80,8 +80,13 @@ def main() -> int:
     require(node == "/dev/block/sda25", f"Unexpected USERDATA node: {node}")
     capacity = int(adb("shell", f"blockdev --getsize64 {node}"))
     require(size <= capacity, f"Image {size} does not fit in {capacity}")
-    mounts = adb("shell", "cat /proc/mounts")
-    require(node not in mounts, f"{node} is mounted:\n{mounts}")
+    # TWRP can mount USERDATA using a by-name alias rather than /dev/sda25.
+    # Match the block device number so every alias and bind mount is covered.
+    devno = adb("shell", "cat /sys/class/block/sda25/dev")
+    mountinfo = adb("shell", "cat /proc/self/mountinfo")
+    mounts = [line for line in mountinfo.splitlines()
+              if len(line.split()) > 2 and line.split()[2] == devno]
+    require(not mounts, f"{node} is mounted:\n" + "\n".join(mounts))
     print(f"USERDATA={node} capacity={capacity} image={size} ({total_mb} MiB)", flush=True)
 
     chunks = (total_mb + CHUNK_MB - 1) // CHUNK_MB
@@ -126,9 +131,11 @@ def main() -> int:
 
     # e2fsck exits 1 when it repaired something, which is not a transfer failure.
     check = subprocess.run([str(ADB), "-s", SERIAL, "shell",
-                            f"e2fsck -f -y {node}; blkid {node}"],
+                            f"e2fsck -f -y {node}; rc=$?; blkid {node}; exit $rc"],
                            capture_output=True, text=True, timeout=3600)
     print((check.stdout + check.stderr).strip(), flush=True)
+    require(check.returncode in (0, 1, 2, 3),
+            f"Filesystem check failed with status {check.returncode}; left in recovery")
     return 0
 
 
