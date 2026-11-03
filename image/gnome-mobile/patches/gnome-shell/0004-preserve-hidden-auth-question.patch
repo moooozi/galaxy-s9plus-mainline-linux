@@ -1,0 +1,67 @@
+--- a/js/gdm/authPrompt.js
++++ b/js/gdm/authPrompt.js
+@@ -942,6 +942,17 @@
+             this._webLoginDialog.stopLoading();
+     }
+ 
++    clearInput() {
++        // Hiding the mobile prompt must erase typed secrets without discarding
++        // the verifier's unanswered question and its answer callback.
++        if (this.verificationStatus === AuthPromptStatus.VERIFICATION_IN_PROGRESS)
++            return;
++
++        this._entry.text = '';
++        this._inactiveEntry.text = '';
++        this._clearPreemptiveState();
++    }
++
+     clear(params) {
+         if (this.verificationStatus === AuthPromptStatus.VERIFICATION_IN_PROGRESS)
+             return;
+--- a/js/ui/unlockDialog.js
++++ b/js/ui/unlockDialog.js
+@@ -347,7 +347,7 @@
+             return Clutter.EVENT_PROPAGATE;
+ 
+         if (keyval === Clutter.KEY_Escape) {
+-            this._authPrompt.clear();
++            this._authPrompt.clearInput();
+             this._showClock();
+             return Clutter.EVENT_STOP;
+         }
+@@ -468,7 +468,7 @@
+                 this._authPrompt.deleteLastCharacter();
+             });
+             this._pinUnlockKeyboard.connect('delete-all', () => {
+-                this._authPrompt.clear();
++                this._authPrompt.clearInput();
+             });
+             this._pinUnlockKeyboard.connect('show-full-keyboard', () => {
+                 if (pinEntryIndicator.visible) {
+@@ -608,7 +608,7 @@
+             onStopped: () => {
+                 this._promptBoxHidden = this._activePage === this._clockNotificationsBox;
+                 if (this._promptBoxHidden)
+-                    this._authPrompt.clear();
++                    this._authPrompt.clearInput();
+             },
+         });
+     }
+@@ -630,7 +630,7 @@
+             onStopped: () => {
+                 this._promptBoxHidden = this._activePage === this._clockNotificationsBox;
+                 if (this._promptBoxHidden)
+-                    this._authPrompt.clear();
++                    this._authPrompt.clearInput();
+             },
+         });
+     }
+@@ -728,7 +728,7 @@
+             onStopped: () => {
+                 this._promptBoxHidden = this._activePage === this._clockNotificationsBox;
+                 if (this._promptBoxHidden)
+-                    this._authPrompt.clear();
++                    this._authPrompt.clearInput();
+ 
+                 endCb();
+             },

@@ -36,7 +36,11 @@ The phone power corrections cover three connected components:
 - Shell monitors the public DisplayConfig DPMS property asynchronously, restores
   the unlock dialog's cancellation contract, and honors `lock-delay=0` on explicit
   activation without waiting for the idle fade. Accelerator signals snapshot
-  the display state before the asynchronous activity wake.
+  the display state before the asynchronous activity wake. Revision `0s9plus3`
+  clears typed secrets when returning to the mobile clock page while preserving
+  the pending authentication question. Previously these transitions discarded
+  its answer callback, causing password submission to throw "No pending request
+  to complete". Erasing all PIN digits follows the same input-only clearing path.
 - Settings Daemon handles press/release for `toggle-blank`: short release blanks
   or wakes, while a one-second hold requests the session's power confirmation
   dialog. Other power policies retain their existing behavior. Pending holds
