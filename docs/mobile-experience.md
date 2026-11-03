@@ -42,3 +42,38 @@ For verbose debugging, rebuild the forced kernel command line with
 and `splash`. Changing the outer Android BOOT command line alone does not override
 `CONFIG_CMDLINE_FORCE=y`. Full diagnostics remain available with `journalctl -b`
 and `dmesg` in normal operation.
+
+## Display resolution options
+
+The shared mobile kernel advertises these modes to GNOME/KDE display settings:
+
+| Mode | Panel input | Rendered pixels relative to native |
+| --- | --- | --- |
+| Native WQHD+ | 1440×2960 | 100% |
+| FHD+ | 1080×2220 | 56.25% |
+| HD+ | 720×1480 | 25% |
+
+Select a resolution under Settings → Displays and choose a comfortable scale.
+Native remains the preferred/default mode. Scaling the desktop UI alone does not
+provide these lower panel-input modes. HD+ is 720×1480: the vendor header's
+720×1048 comment is a typo; its DSC PPS and page-address bytes encode 1480.
+
+The driver changes the active IDMA source pitch/crop, DPP image size, blender
+window/background, DSC encoder geometry, OUTFIFO, DSIM command dimensions and
+Samsung's panel DSC/PPS/address/scaler sequence together. FHD buffers can have
+an 1088-pixel allocation pitch while the visible image and DPP width remain 1080.
+Transport clocks, lane configuration, routing and compression topology stay at
+bootloader values. Lower modes are offered only when the inherited active
+channel is the verified channel 0/DPP0 and its native geometry is recognized.
+
+The mode tables retain Samsung's GPL-2.0 attribution. The encoder-table test
+matches every native PPS word to an aligned read-only snapshot of the actual
+phone. Another regression executes the real IDMA/DPP helper to check padded
+pitch versus visible geometry. On-phone mode testing must check hardware
+readback and transfer errors as well as Mutter's reported mode: a successful
+DisplayConfig request alone is insufficient evidence.
+
+Lower modes reduce rendering and framebuffer work. Actual battery-life or
+power improvement has not been measured; panel emission and transport clocks
+also contribute to power use. Test results and installed build details are
+recorded in the installation STATUS.md outside this source repository.

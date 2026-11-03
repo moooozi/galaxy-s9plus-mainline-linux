@@ -5,10 +5,11 @@
  * Samsung's bootloader leaves DECON0 (0x16030000) scanning out the boot
  * framebuffer at 0xcc000000 through DSIM0, with the panel fully configured
  * and running. This driver adopts that pipeline unchanged and owns exactly
- * two things afterwards:
+ * the following afterwards:
  *
  *  1. the IDMA scanout base address of the live window, and
  *  2. the update/trigger handshake that makes a new base address visible.
+ *  3. coordinated scanout/DSC/DSIM/panel geometry for Samsung's three modes.
  *
  * The stock panel runs MIPI command mode with hardware (TE) trigger
  * (stock DT: psr_mode=2, trig_mode=0, dsi_mode=0). In that mode a new
@@ -25,9 +26,10 @@
  *      RMW HW_SW_TRIG_CONTROL: set HW_TRIG_EN, clear HW_TRIG_MASK_DECON
  *      next TE edge latches and transfers; FRAME_START IRQ completes flips
  *
- * Everything else -- window geometry, format, size, channel map, DSC,
- * OUTFIFO, DSIM, panel, clocks, power -- is inherited from sboot and
- * never written. The trigger control register is only ever modified
+ * Format, channel map, transport clocks, power and compression topology are
+ * inherited from sboot. Geometry changes follow Samsung's DSU tables while
+ * DECON is idle; the native mode is left unchanged at initial takeover.
+ * The trigger control register is only ever modified
  * read-modify-write: uniLoader's proven unlock value 0x1281 sets bits
  * (12|9|7|0) that this generation's header does not fully name, so the
  * unknown bits must survive every write.
@@ -62,6 +64,7 @@
 #include <linux/iopoll.h>
 
 #include "s9p-panel-self-mask.h"
+#include "s9p-display-modes.h"
 
 #define DRIVER_NAME "exynos"
 
@@ -182,22 +185,27 @@ MODULE_PARM_DESC(panel_sleep, "also put the panel into sleep mode when blanking"
 
 #define PANEL_W				1440
 #define PANEL_H				2960
+#define DPP0_PHYS                       0x16021000
+#define DPP_IMG_SIZE                    0x0018
 
 struct s9p_decon {
 	struct drm_device drm;
 	struct drm_simple_display_pipe pipe;
 	struct drm_connector connector;
 	void __iomem *decon;
+	void __iomem *postproc;       /* active DPP0, before DECON's blender */
 	void __iomem *dpp;		/* DPU_DMA region 0x16070000; the IDMA
 					 * channel registers sit at
 					 * 0x16071000 + 0x1000 * channel */
 	unsigned int win;		/* the window sboot left scanning */
 	unsigned int chan;		/* DPU_DMA channel behind that window */
 	unsigned int width, height;
+	unsigned int active_width, active_height;
 	bool command_mode;		/* stock DT psr_mode=2: TE-driven */
 	bool hw_trigger;		/* stock DT trig_mode=0 */
 	bool enabled;
 	bool panel_asleep;
+	bool geometry_dirty;
 	u32 mask_restores;
 	u32 inherited_trig_ctrl;
 	u32 inherited_path0;
@@ -227,10 +235,10 @@ static const u32 s9p_formats[] = {
 
 static u32 s9p_shadow_mask(const struct s9p_decon *priv)
 {
-	/* the vendor pan path requests the window bit only
-	 * (decon_reg_update_req_window); the global bit is for GLOBAL_CONTROL
-	 * changes, which this driver never makes. */
-	return DECON_SHADOW_REQ_WIN(priv->win);
+	/* Ordinary flips request only the window. A resolution change also
+	 * latches the blender/OUTFIFO/DSC geometry through the global bit. */
+	return DECON_SHADOW_REQ_WIN(priv->win) |
+		(priv->geometry_dirty ? DECON_SHADOW_REQ_GLOBAL : 0);
 }
 
 /*
@@ -250,7 +258,8 @@ static int s9p_wait_shadow_idle(struct s9p_decon *priv)
 	u32 v;
 
 	return readl_poll_timeout(priv->decon + DECON_SHADOW_REG_UPDATE_REQ,
-				  v, (v & s9p_shadow_mask(priv)) == 0,
+				  v, (v & (DECON_SHADOW_REQ_WIN(priv->win) |
+					    DECON_SHADOW_REQ_GLOBAL)) == 0,
 				  SHADOW_POLL_US, SHADOW_TIMEOUT_US);
 }
 
@@ -280,14 +289,14 @@ static void s9p_decon_program_address(struct s9p_decon *priv, dma_addr_t addr)
 	wmb();
 	writel_relaxed(s9p_shadow_mask(priv),
 		       priv->decon + DECON_SHADOW_REG_UPDATE_REQ);
+	priv->geometry_dirty = false;
 	s9p_hw_trigger_unmask(priv);
 }
 
 /*
- * The fetch channel is left EXACTLY as sboot configured it (format, sizes,
- * alpha, the lot): it is the live pipeline feeding the panel, and the boot
- * framebuffer node describes the same layout we hand out (XRGB8888,
- * 1440*4 stride, 1440x2960). A flip only ever moves the base address.
+ * Fetch format, alpha and channel routing are inherited from sboot. Source
+ * geometry is updated separately for the selected mode and framebuffer pitch;
+ * a normal page flip changes only the address and repeats that geometry.
  */
 
 static irqreturn_t s9p_decon_irq(int irq, void *data)
@@ -374,7 +383,8 @@ static int s9p_panel_commands_begin(struct s9p_decon *priv)
     return ret;
 }
 
-static int s9p_panel_write(struct s9p_decon *priv, const u8 *data, size_t len)
+static int s9p_panel_packet(struct s9p_decon *priv, u8 type,
+                           const u8 *data, size_t len)
 {
     u32 value, header;
     size_t i, j;
@@ -388,8 +398,10 @@ static int s9p_panel_write(struct s9p_decon *priv, const u8 *data, size_t len)
     if (ret)
         goto fail;
     writel(DSIM_INTSRC_PH_FIFO_EMPTY, priv->dsim + DSIM_INTSRC);
-    if (len == 1) {
-        header = MIPI_DCS_SHORT_WRITE | DSIM_PKTHDR_DATA0(data[0]);
+    if (type != 0x39 && type != 0x0a) {
+        if (len != 1)
+            return -EINVAL;
+        header = type | DSIM_PKTHDR_DATA0(data[0]);
     } else {
         /* Vendor commands, including two-byte ones, use DCS long writes.
          * Samsung's SRAM path limits payload to 496 bytes plus command. */
@@ -399,7 +411,7 @@ static int s9p_panel_write(struct s9p_decon *priv, const u8 *data, size_t len)
                 value |= (u32)data[i + j] << (8 * j);
             writel(value, priv->dsim + DSIM_PAYLOAD);
         }
-        header = 0x39 | DSIM_PKTHDR_DATA0(len);
+        header = type | DSIM_PKTHDR_DATA0(len);
     }
     writel(header, priv->dsim + DSIM_PKTHDR);
     ret = readl_poll_timeout(priv->dsim + DSIM_INTSRC, value,
@@ -414,6 +426,12 @@ fail:
         dev_err(priv->drm.dev, "panel command %02x timed out (%d)\n",
                 data[0], ret);
     return ret;
+}
+
+static int s9p_panel_write(struct s9p_decon *priv, const u8 *data, size_t len)
+{
+    return s9p_panel_packet(priv, len == 1 ? MIPI_DCS_SHORT_WRITE : 0x39,
+                            data, len);
 }
 
 #define s9p_panel_seq(priv, ...) ({                                  \
@@ -587,22 +605,145 @@ static void s9p_panel_on(struct s9p_decon *priv)
 
 /* ----------------------------------------------------------------- pipe */
 
+/* Samsung's DSU sequence, with DECON idle and the TE trigger masked. The
+ * transport clocks, channel routing and DSC topology stay at their inherited
+ * values. Only the geometry and the panel's documented scaler mode change.
+ */
+static int s9p_decon_set_resolution(struct s9p_decon *priv,
+                                   const struct s9p_display_mode *mode)
+{
+    const u8 compression = 1;
+    u32 size = (mode->height << 16) | mode->width;
+    u32 value;
+    unsigned int encoder, offset;
+    int ret, lock_ret;
+
+    if (mode->width == PANEL_W && mode->width == priv->active_width &&
+        mode->height == priv->active_height)
+        return 0;
+    ret = s9p_panel_commands_begin(priv);
+    if (ret)
+        return ret;
+    /* A failed partial sequence requires a full retry, even to native mode. */
+    priv->active_width = 0;
+    priv->active_height = 0;
+    ret = s9p_panel_seq(priv, 0x9f, 0xa5, 0xa5);
+    if (!ret)
+        ret = s9p_panel_packet(priv, 0x07, &compression, 1);
+    if (!ret)
+        ret = s9p_panel_packet(priv, 0x0a, mode->pps, sizeof(mode->pps));
+    lock_ret = s9p_panel_seq(priv, 0x9f, 0x5a, 0x5a);
+    if (!ret)
+        ret = lock_ret;
+    if (!ret)
+        ret = s9p_panel_seq(priv, 0x2a, 0, 0,
+                            (mode->width - 1) >> 8, (mode->width - 1) & 0xff);
+    if (!ret)
+        ret = s9p_panel_seq(priv, 0x2b, 0, 0,
+                            (mode->height - 1) >> 8, (mode->height - 1) & 0xff);
+    if (!ret)
+        ret = s9p_panel_seq(priv, 0xf0, 0x5a, 0x5a);
+    if (!ret)
+        ret = s9p_panel_seq(priv, 0xba, mode->scaler, 0x26, 0x08, 0x08, 0xf3);
+    lock_ret = s9p_panel_seq(priv, 0xf0, 0xa5, 0xa5);
+    if (!ret)
+        ret = lock_ret;
+    if (ret)
+        return ret;
+
+    /* DSIM command-mode dimensions: compressed RGB width is width / 3.
+     * Existing underrun allowance is retained (conservative at lower modes).
+     */
+    writel(mode->height, priv->dsim + 0x30);
+    writel(mode->width / 3, priv->dsim + 0x38);
+    writel((mode->height << 16) | (mode->width / 3), priv->dsim + 0x3c);
+    writel(((mode->width / 2) << 16) | (mode->width / 2), priv->dsim + 0x78);
+
+    /* Two DSC encoders, one slice per encoder. The inherited control bits,
+     * routing, byte order and static RC model remain unchanged.
+     */
+    for (encoder = 0; encoder < 2; encoder++) {
+        void __iomem *dsc = priv->decon + 0x4000 + encoder * 0x1000;
+
+        value = readl(dsc + 0x0c);
+        value &= ~0x33ff;
+        value |= (3 << 12) | (mode->width / 6);
+        writel(value, dsc + 0x0c);
+        for (offset = 4; offset < 88; offset += 4)
+            writel(s9p_encoder_pps_word(mode, offset), dsc + 0x20 + offset);
+    }
+    writel(size, priv->decon + 0x0200); /* blender background */
+    writel(size, priv->decon + 0x00a0); /* scaled image */
+    writel((mode->height << 16) | (mode->width / 6), priv->decon + 0x0120);
+    writel(mode->width / 6, priv->decon + 0x0124);
+    writel((mode->slice_height << 16) | (mode->width / 6), priv->decon + 0x0128);
+    writel(((mode->height - 1) << 16) | (mode->width - 1),
+            priv->decon + WIN_END_POSITION(priv->win));
+    priv->active_width = mode->width;
+    priv->active_height = mode->height;
+    priv->geometry_dirty = true;
+    drm_info(&priv->drm, "panel mode %ux%u\n", mode->width, mode->height);
+    /* The caller programs valid source geometry/address before unmasking. */
+    return 0;
+}
+
+static void s9p_decon_source_geometry(struct s9p_decon *priv,
+                                     const struct drm_framebuffer *fb)
+{
+    void __iomem *channel = s9p_chan_regs(priv, priv->chan);
+
+    writel((fb->height << 16) | (fb->pitches[0] / 4), channel + IDMA_SRC_SIZE);
+    writel((fb->height << 16) | fb->width, channel + IDMA_IMG_SIZE);
+    if (priv->postproc)
+        writel((fb->height << 16) | fb->width, priv->postproc + DPP_IMG_SIZE);
+}
+
+static int s9p_decon_pipe_check(struct drm_simple_display_pipe *pipe,
+                               struct drm_plane_state *plane_state,
+                               struct drm_crtc_state *crtc_state)
+{
+    struct drm_framebuffer *fb = plane_state->fb;
+    struct s9p_decon *priv = container_of(pipe, struct s9p_decon, pipe);
+    const struct drm_display_mode *mode = &crtc_state->mode;
+
+    if (!s9p_display_mode_find(mode->hdisplay, mode->vdisplay))
+        return -EINVAL;
+    if (mode->hdisplay != PANEL_W && !priv->postproc)
+        return -EINVAL;
+    if (fb && (fb->width != mode->hdisplay || fb->height != mode->vdisplay ||
+               fb->pitches[0] % 4 || fb->pitches[0] / 4 > 0xffff ||
+               fb->offsets[0] || plane_state->src_x || plane_state->src_y))
+        return -EINVAL;
+    return 0;
+}
+
 static void s9p_decon_pipe_enable(struct drm_simple_display_pipe *pipe,
 				  struct drm_crtc_state *crtc_state,
 				  struct drm_plane_state *plane_state)
 {
 	struct s9p_decon *priv = container_of(pipe, struct s9p_decon, pipe);
 	struct drm_gem_dma_object *obj;
+	const struct s9p_display_mode *mode;
+	int ret;
 
 	/*
 	 * DECON and DSIM have been running since the bootloader; "enabling"
 	 * the pipeline means pointing the inherited fetch channel at our
-	 * buffer (the first flip below) and arming the trigger. The channel
-	 * configuration itself is never touched.
+	 * buffer and arming the trigger, after any requested geometry change.
 	 */
 	s9p_panel_up(priv);
+	mode = s9p_display_mode_find(crtc_state->mode.hdisplay, crtc_state->mode.vdisplay);
+	ret = mode ? s9p_decon_set_resolution(priv, mode) : -EINVAL;
+	if (ret) {
+		drm_err(&priv->drm, "resolution switch failed: %d\n", ret);
+		/* A partially programmed panel must never scan a released buffer. */
+		if (priv->black_dma)
+			s9p_decon_program_address(priv, priv->black_dma);
+		return;
+	}
 	obj = to_drm_gem_dma_obj(plane_state->fb->obj[0]);
 	s9p_wait_shadow_idle(priv);
+	s9p_decon_source_geometry(priv, plane_state->fb);
 	s9p_decon_program_address(priv, obj->dma_addr);
 	s9p_frame_start_irq_set(priv, true);
 	priv->enabled = true;
@@ -684,6 +825,7 @@ static void s9p_decon_pipe_update(struct drm_simple_display_pipe *pipe,
 				"previous shadow update stuck, skipping flip\n");
 		} else {
 			obj = to_drm_gem_dma_obj(fb->obj[0]);
+			s9p_decon_source_geometry(priv, fb);
 			s9p_decon_program_address(priv, obj->dma_addr);
 			/*
 			 * The vendor's wait_update_done_and_mask half of the
@@ -720,6 +862,7 @@ static void s9p_decon_pipe_update(struct drm_simple_display_pipe *pipe,
 }
 
 static const struct drm_simple_display_pipe_funcs s9p_pipe_funcs = {
+	.check = s9p_decon_pipe_check,
 	.enable = s9p_decon_pipe_enable,
 	.disable = s9p_decon_pipe_disable,
 	.update = s9p_decon_pipe_update,
@@ -734,20 +877,30 @@ static int s9p_decon_get_modes(struct drm_connector *connector)
 	struct s9p_decon *priv = container_of(connector, struct s9p_decon,
 					      connector);
 	struct drm_display_mode *mode;
+	unsigned int i;
+	int count = 0;
 
-	mode = drm_cvt_mode(connector->dev, priv->width, priv->height, 60,
-			    false, false, false);
-	if (!mode)
-		return 0;
-	mode->type |= DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
-	drm_mode_set_name(mode);
-	drm_mode_probed_add(connector, mode);
+	for (i = 0; i < ARRAY_SIZE(s9p_display_modes); i++) {
+		if (i && !priv->postproc)
+			break;
+		mode = drm_cvt_mode(connector->dev, s9p_display_modes[i].width,
+				    s9p_display_modes[i].height, 60,
+				    false, false, false);
+		if (!mode)
+			continue;
+		mode->type |= DRM_MODE_TYPE_DRIVER;
+		if (s9p_display_modes[i].width == priv->width)
+			mode->type |= DRM_MODE_TYPE_PREFERRED;
+		drm_mode_set_name(mode);
+		drm_mode_probed_add(connector, mode);
+		count++;
+	}
 
 	/* 6.4 inch diagonal; userspace uses this for its scale factor. */
 	connector->display_info.width_mm = 68;
 	connector->display_info.height_mm = 140;
 
-	return 1;
+	return count;
 }
 
 static enum drm_connector_status
@@ -915,6 +1068,21 @@ static int s9p_decon_probe(struct platform_device *pdev)
 	priv->hw_trigger = true;
 	priv->width = PANEL_W;
 	priv->height = PANEL_H;
+	priv->active_width = PANEL_W;
+	priv->active_height = PANEL_H;
+
+	/* Samsung's dpp_reg_set_size updates both IDMA and DPP_IMG_SIZE. A
+	 * mismatch stalls the entire pipeline. Only DPP0 behind the proven
+	 * active channel is accessed: inactive channels can be clock-gated.
+	 */
+	if (priv->chan == 0) {
+		priv->postproc = devm_ioremap(&pdev->dev, DPP0_PHYS, 0x40);
+		if (priv->postproc && readl(priv->postproc + DPP_IMG_SIZE) !=
+		    ((PANEL_H << 16) | PANEL_W)) {
+			dev_warn(&pdev->dev, "unexpected DPP0 geometry; native mode only\n");
+			priv->postproc = NULL;
+		}
+	}
 
 	/* Enable only our observation interrupt, read-modify-write. */
 	s9p_frame_start_irq_set(priv, false);
@@ -962,9 +1130,9 @@ static int s9p_decon_probe(struct platform_device *pdev)
 					    PANEL_W * PANEL_H * 4, DRIVER_NAME);
 
 	drm_mode_config_init(drm);
-	drm->mode_config.min_width = priv->width;
+	drm->mode_config.min_width = 720;
 	drm->mode_config.max_width = priv->width;
-	drm->mode_config.min_height = priv->height;
+	drm->mode_config.min_height = 1480;
 	drm->mode_config.max_height = priv->height;
 	drm->mode_config.funcs = &s9p_mode_funcs;
 

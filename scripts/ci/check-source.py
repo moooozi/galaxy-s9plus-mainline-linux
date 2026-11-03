@@ -10,7 +10,7 @@ for directory in ('scripts', 'image', 'experiments'):
     for path in (REPO / directory).rglob('*'):
         if not path.is_file():
             continue
-        if path.suffix == '.py' or path.name == 's9plus-bluetooth':
+        if path.suffix == '.py' or path.name in ('s9plus-bluetooth', 's9plus-boot-errors'):
             ast.parse(path.read_text(), filename=str(path))
         elif path.suffix == '.sh' or path.name in ('s9plus-audio', 's9plus-plasma-display'):
             subprocess.run(['bash', '-n', str(path)], check=True)
