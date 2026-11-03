@@ -1,0 +1,29 @@
+#!/usr/bin/python3
+"""Reveal the boot console when the current boot logs an error."""
+import select
+import subprocess
+import time
+
+journal = subprocess.Popen(
+    ['journalctl', '--boot', '--priority=err', '--follow', '--no-tail',
+     '--output=short-monotonic', '--quiet'], stdout=subprocess.PIPE, bufsize=0)
+revealed = False
+try:
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        if subprocess.run(['plymouth', '--ping'], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode:
+            break
+        if not select.select([journal.stdout], [], [], 1)[0]:
+            continue
+        line = journal.stdout.readline()
+        if not line:
+            break
+        if not revealed:
+            subprocess.run(['plymouth', 'hide-splash'], check=False)
+            revealed = True
+        with open('/dev/console', 'ab', buffering=0) as console:
+            console.write(line)
+finally:
+    journal.terminate()
+    journal.wait()

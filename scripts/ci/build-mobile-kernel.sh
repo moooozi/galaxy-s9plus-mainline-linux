@@ -48,7 +48,7 @@ cp "$REPO/firmware/bcmdhd_clm.blob" "$WORK/firmware/brcm/brcmfmac4361-pcie.clm_b
 cp "$REPO/firmware/"regulatory.db* "$WORK/firmware/"
 sed -i 's/\r$//' "$WORK/firmware/brcm/brcmfmac4361-pcie.txt"
 install -m 644 "$REPO/src/configs/s9plus-mobile.config" "$SRC/out/.config"
-install -m 644 "$REPO/branding/shero_logo.ppm" "$SRC/drivers/video/logo/logo_shero_clut224.ppm"
+install -m 644 "$REPO/branding/ubuntu_logo.ppm" "$SRC/drivers/video/logo/logo_ubuntu_clut224.ppm"
 # The tested board DT is kept as source and rebuilt with this kernel's dtc.
 install -m 644 "$REPO/src/mainline-dts/exynos9810-star2lte.dts" "$SRC/arch/arm64/boot/dts/exynos/"
 sed -i 's/status = "disabled"; \/\* UFS-STATUS \*\//status = "okay";/' "$SRC/arch/arm64/boot/dts/exynos/exynos9810-star2lte.dts"

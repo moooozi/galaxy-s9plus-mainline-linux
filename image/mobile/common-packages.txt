@@ -2,6 +2,8 @@
 systemd-sysv
 systemd-resolved
 systemd-timesyncd
+plymouth
+plymouth-theme-spinner
 dbus
 udev
 kmod

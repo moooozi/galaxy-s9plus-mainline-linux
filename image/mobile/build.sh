@@ -77,6 +77,8 @@ if [ "$VARIANT" = gnome ]; then
 fi
 rootfs_configure "$R"
 rootfs_device "$R" "$REPO/device/base" "$REPO/device/configure.sh"
+copy_tree "$PROFILE/rootfs" "$R"
+in_chroot "$R" systemctl enable s9plus-boot-errors.service
 python3 "$REPO/scripts/ci/install-mobile-firefox.py" "$WORK/s9plus-mobile-firefox.deb"
 cp "$WORK/s9plus-mobile-firefox.deb" "$R/tmp/s9plus-mobile-firefox.deb"
 in_chroot "$R" dpkg -i /tmp/s9plus-mobile-firefox.deb

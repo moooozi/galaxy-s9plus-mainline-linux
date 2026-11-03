@@ -1,0 +1,16 @@
+[Unit]
+Description=Reveal boot errors instead of the Ubuntu splash
+DefaultDependencies=no
+After=plymouth-start.service systemd-journald.service
+Before=display-manager.service
+ConditionKernelCommandLine=splash
+ConditionKernelCommandLine=!plymouth.enable=0
+
+[Service]
+Type=exec
+ExecStart=/usr/local/sbin/s9plus-boot-errors
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=sysinit.target

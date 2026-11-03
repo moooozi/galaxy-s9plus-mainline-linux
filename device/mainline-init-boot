@@ -10,12 +10,20 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
 
-echo 8 > /proc/sys/kernel/printk
+case " $(cat /proc/cmdline) " in
+    *" s9p_boot_debug=1 "*) BOOT_DEBUG=1; echo 8 > /proc/sys/kernel/printk ;;
+    *) BOOT_DEBUG=0; echo 4 > /proc/sys/kernel/printk ;;
+esac
 echo 1 > /proc/sys/kernel/sysrq
 
 log() {
-	echo "S9P| $*" > /dev/kmsg 2>/dev/null
-	echo "S9P| $*"
+	echo "<6>S9P| $*" > /dev/kmsg 2>/dev/null
+	[ "$BOOT_DEBUG" = 0 ] || echo "S9P| $*"
+}
+
+error() {
+	echo "<3>S9P| $*" > /dev/kmsg 2>/dev/null
+	echo "S9P| ERROR: $*" > /dev/console
 }
 
 # TWRP sits on RECOVERY: arm that first, so whatever goes wrong below, the next
@@ -51,22 +59,22 @@ while [ "$i" -lt 60 ]; do
 done
 
 if [ ! -b /dev/sda25 ]; then
-	log "USERDATA never appeared -- no storage, dropping to a rescue shell"
+	error "USERDATA never appeared -- no storage, dropping to a rescue shell"
 	log "block: $(echo $(ls -d /dev/sd* 2>/dev/null))"
 	exec setsid sh -i </dev/console >/dev/console 2>&1
 fi
 
 log "USERDATA found after $i half-seconds"
 if ! mount -t ext4 -o rw,noatime /dev/sda25 /root; then
-	log "mount of /dev/sda25 failed, retrying read-only"
+	error "mount of /dev/sda25 failed, retrying read-only"
 	mount -t ext4 -o ro /dev/sda25 /root || {
-		log "rootfs is not mountable"
+		error "rootfs is not mountable"
 		exec setsid sh -i </dev/console >/dev/console 2>&1
 	}
 fi
 
 if [ ! -x /root/sbin/init ]; then
-	log "no /sbin/init in the rootfs"
+	error "no /sbin/init in the rootfs"
 	exec setsid sh -i </dev/console >/dev/console 2>&1
 fi
 
@@ -112,5 +120,5 @@ mount --move /sys /root/sys 2>/dev/null
 mount --move /dev /root/dev 2>/dev/null
 exec switch_root /root /sbin/init
 
-log "switch_root failed"
+error "switch_root failed"
 exec setsid sh -i </dev/console >/dev/console 2>&1
