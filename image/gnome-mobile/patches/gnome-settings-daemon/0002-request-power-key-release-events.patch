@@ -1,0 +1,20 @@
+--- a/plugins/media-keys/shell-action-modes.h
++++ b/plugins/media-keys/shell-action-modes.h
+@@ -50,4 +50,5 @@
+   META_KEY_BINDING_IS_REVERSED  = 1 << 2,
+   META_KEY_BINDING_NON_MASKABLE = 1 << 3,
+   META_KEY_BINDING_IGNORE_AUTOREPEAT = 1 << 4,
++  META_KEY_BINDING_TRIGGER_RELEASE = 1 << 7,
+ } MetaKeyBindingFlags;
+\ No newline at end of file
+--- a/plugins/media-keys/shortcuts-list.h
++++ b/plugins/media-keys/shortcuts-list.h
+@@ -87,7 +87,7 @@
+         { TOGGLE_CONTRAST_KEY, "toggle-contrast", FALSE, SHELL_ACTION_MODE_ALL, META_KEY_BINDING_IGNORE_AUTOREPEAT },
+         { MAGNIFIER_ZOOM_IN_KEY, "magnifier-zoom-in", FALSE, SHELL_ACTION_MODE_ALL },
+         { MAGNIFIER_ZOOM_OUT_KEY, "magnifier-zoom-out", FALSE, SHELL_ACTION_MODE_ALL },
+-        { POWER_KEY, "power", TRUE, POWER_KEYS_MODE, META_KEY_BINDING_IGNORE_AUTOREPEAT },
++        { POWER_KEY, "power", TRUE, POWER_KEYS_MODE, META_KEY_BINDING_IGNORE_AUTOREPEAT | META_KEY_BINDING_TRIGGER_RELEASE },
+         /* the kernel / Xorg names really are like this... */
+         { SUSPEND_KEY, "suspend", TRUE, POWER_KEYS_MODE, META_KEY_BINDING_IGNORE_AUTOREPEAT },
+         { HIBERNATE_KEY, "hibernate", TRUE, POWER_KEYS_MODE, META_KEY_BINDING_IGNORE_AUTOREPEAT },

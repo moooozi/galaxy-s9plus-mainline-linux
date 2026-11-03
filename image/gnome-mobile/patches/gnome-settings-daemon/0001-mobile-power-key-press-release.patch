@@ -23,7 +23,7 @@
  
          /* Shell stuff */
          GsdShell        *shell_proxy;
-@@ -2139,20 +2142,80 @@
+@@ -2139,20 +2142,81 @@
                  g_warning ("Failed to activate the screen saver for the power button: %s", error->message);
  }
  
@@ -80,6 +80,7 @@
 +        GsdMediaKeysManager *manager = data;
 +        GsdMediaKeysManagerPrivate *priv = GSD_MEDIA_KEYS_MANAGER_GET_PRIVATE (manager);
 +        priv->mobile_power_timer = 0;
++        priv->mobile_power_action = 0;
 +        mobile_set_display_power (manager, 0);
 +        /* Request the existing confirmation UI, including when locked.
 +         * Never call logind's immediate PowerOff action here. */
@@ -110,7 +111,7 @@
  }
  
  static void
-@@ -2648,7 +2711,18 @@
+@@ -2648,7 +2712,18 @@
                  if (j >= key->accel_ids->len)
                          continue;
  
@@ -130,7 +131,7 @@
                          do_custom_action (manager, device_node, key, timestamp);
                  else
                          do_action (manager, device_node, mode, key->key_type, timestamp);
-@@ -2893,6 +2967,8 @@
+@@ -2893,6 +2968,8 @@
  
          g_signal_connect (priv->key_grabber, "accelerator-activated",
                            G_CALLBACK (on_accelerator_activated), manager);
@@ -139,7 +140,7 @@
  
          init_kbd (manager);
  }
-@@ -2905,6 +2981,7 @@
+@@ -2905,6 +2982,7 @@
  
          name_owner = g_dbus_proxy_get_name_owner (G_DBUS_PROXY (priv->shell_proxy));
  
@@ -147,7 +148,7 @@
          g_ptr_array_set_size (priv->keys, 0);
          g_clear_object (&priv->key_grabber);
  
-@@ -3162,6 +3239,8 @@
+@@ -3162,6 +3240,8 @@
                  priv->inhibit_suspend_taken = FALSE;
          }
  
@@ -156,7 +157,7 @@
          if (priv->reenable_power_button_timer_id) {
                  g_source_remove (priv->reenable_power_button_timer_id);
                  priv->reenable_power_button_timer_id = 0;
-@@ -3366,6 +3445,7 @@
+@@ -3366,6 +3446,7 @@
                  /* Some devices send a power-button press on resume when woken
                   * up with the power-button, suppress this, to avoid immediate
                   * re-suspend. */
