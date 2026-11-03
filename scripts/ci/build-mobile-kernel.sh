@@ -60,6 +60,8 @@ export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 scripts/config --file out/.config --set-str INITRAMFS_SOURCE "$WORK/initramfs $WORK/initramfs-nodes.list" \
     --set-str EXTRA_FIRMWARE_DIR "$WORK/firmware" --set-str LOCALVERSION '-s9plus' -d LOCALVERSION_AUTO
 make O=out olddefconfig
+# Desktop Bluetooth availability relies on the kernel's real rfkill interface.
+grep -qx 'CONFIG_RFKILL=y' out/.config
 make O=out -j"$(nproc)" Image exynos/exynos9810-star2lte.dtb
 # Reuse the same explicit module targets used by the successful phone build.
 make O=out -j"$(nproc)" fs/fuse/fuse.ko sound/soundcore.ko sound/core/snd.ko \
