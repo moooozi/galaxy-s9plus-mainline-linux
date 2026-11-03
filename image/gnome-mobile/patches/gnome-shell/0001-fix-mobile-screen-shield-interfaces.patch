@@ -1,0 +1,83 @@
+--- a/js/ui/screenShield.js
++++ b/js/ui/screenShield.js
+@@ -20,6 +20,10 @@
+ import * as SmartcardManager from '../gdm/smartcardManager.js';
+ 
+ import {adjustAnimationTime} from '../misc/animationUtils.js';
++import {loadInterfaceXML} from '../misc/fileUtils.js';
++
++const DisplayConfigProxy = Gio.DBusProxy.makeProxyWrapper(
++    loadInterfaceXML('org.gnome.Mutter.DisplayConfig'));
+ 
+ const SCREENSAVER_SCHEMA = 'org.gnome.desktop.screensaver';
+ const LOCK_ENABLED_KEY = 'lock-enabled';
+@@ -110,11 +114,22 @@
+ 
+         // The unlock prompt is of no use while the display is off; go back to
+         // the clock page whenever the display leaves the ON state.
+-        this._monitorManager = global.backend.get_monitor_manager();
+-        this._monitorManager.connectObject('power-save-mode-changed', () => {
+-            if (this._monitorManager.power_save_mode !== Meta.PowerSaveMode.ON)
+-                this.cancelUnlock();
+-        }, this);
++        // Mutter's DPMS enum/property are private, so use the public D-Bus
++        // property. Initialize asynchronously: Shell owns this bus name itself.
++        this._displayConfigProxy = new DisplayConfigProxy(Gio.DBus.session,
++            'org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig',
++            (proxy, error) => {
++                if (error) {
++                    logError(error, 'Failed to monitor display power state');
++                    return;
++                }
++                proxy.connect('g-properties-changed', (_proxy, changed) => {
++                    const properties = changed.deepUnpack();
++                    // 0 is ON; ignore notifications for unrelated properties.
++                    if ('PowerSaveMode' in properties && proxy.PowerSaveMode !== 0)
++                        this.cancelUnlock();
++                });
++            });
+ 
+         this._loginSession = null;
+         this._getLoginSession();
+@@ -480,9 +495,12 @@
+         const shouldLock = this._settings.get_boolean(LOCK_ENABLED_KEY) && !this._isLocked;
+ 
+         if (shouldLock) {
++            // Explicit activation has already shown the curtain. Only the
++            // idle fade needs to finish before locking; do not add its ten
++            // seconds to a power-button lock with lock-delay=0.
++            const fadeTime = this._isActive ? 0 : adjustAnimationTime(STANDARD_FADE_TIME);
+             const lockTimeout = Math.max(
+-                adjustAnimationTime(STANDARD_FADE_TIME),
+-                this._settings.get_uint(LOCK_DELAY_KEY) * 1000);
++                fadeTime, this._settings.get_uint(LOCK_DELAY_KEY) * 1000);
+             this._lockTimeoutId = GLib.timeout_add_once(
+                 GLib.PRIORITY_DEFAULT,
+                 lockTimeout,
+@@ -689,6 +707,10 @@
+         this.emit('wake-up-screen');
+     }
+ 
++    get powerSaveMode() {
++        return this._displayConfigProxy.PowerSaveMode ?? -1;
++    }
++
+     get locked() {
+         return this._isLocked;
+     }
+--- a/js/ui/unlockDialog.js
++++ b/js/ui/unlockDialog.js
+@@ -693,6 +693,13 @@
+         this._showClock();
+     }
+ 
++    cancel() {
++        // ScreenShield calls this on idle and before sleep. Cancel the current
++        // authentication conversation without dismissing the locked shield.
++        this._authPrompt?.cancel();
++        this._showClock();
++    }
++
+     cancelUnlock() {
+         this._showClock();
+     }

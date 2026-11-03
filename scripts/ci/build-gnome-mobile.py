@@ -36,6 +36,22 @@ def mobile_mutter_symbols(source):
     symbols.write_text(text)
 
 
+def mobile_shell_dependencies(source):
+    # Mobile imports these namespaces unconditionally. Desktop Ubuntu's
+    # packaging only declares the Autoar shared library, not its GI typelib.
+    control = source / 'debian/control'
+    text = control.read_text()
+    additions = {
+        '         gir1.2-gnomedesktop-4.0 (>= 40),\n': '         gir1.2-gnomeautoar-0.1,\n',
+        '         gir1.2-mutter-51 (>= 51),\n': '         gir1.2-modemmanager-1.0,\n',
+    }
+    for anchor, dependency in additions.items():
+        if text.count(anchor) != 1 or dependency in text:
+            raise ValueError('Shell dependency baseline changed; review mobile imports')
+        text = text.replace(anchor, dependency + anchor)
+    control.write_text(text)
+
+
 def prepare(lock, work):
     sources = {}
     for component in lock['components']:
@@ -102,8 +118,13 @@ def main():
         # Ubuntu's downstream patches target stock GNOME. Apply the reviewed
         # mobile tree as-is, while retaining Ubuntu's package split/dependencies.
         shutil.rmtree(source / 'debian/patches', ignore_errors=True)
+        # Local compatibility fixes are versioned with the locked mobile stack.
+        for patch in sorted((REPO / 'image/gnome-mobile/patches' / name).glob('*.patch')):
+            run('patch', '--batch', '--fuzz=0', '-p1', '-i', str(patch), cwd=source)
         if name == 'mutter':
             mobile_mutter_symbols(source)
+        if name == 'gnome-shell':
+            mobile_shell_dependencies(source)
         run('dch', '--newversion', lock['debian_version'], '--distribution', lock['suite'],
             '--force-distribution', 'Build the pinned GNOME Mobile source stack.', cwd=source,
             env={**os.environ, 'DEBFULLNAME': 'Galaxy S9+ Linux maintainers',

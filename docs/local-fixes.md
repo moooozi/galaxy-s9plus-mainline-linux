@@ -1,6 +1,6 @@
 # Fixes preserved from the installed SM-G965F
 
-Fourteen logical fixes were identified in the installation notes on 2026-11-02.
+Fifteen logical fixes were identified in the installation notes on 2026-11-02.
 The count groups paired settings corrections and hardware bring-up work by
 user-visible outcome; build-output ignore rules are additional housekeeping.
 
@@ -18,7 +18,14 @@ user-visible outcome; build-output ignore rules are additional housekeeping.
 12. Bring up the Bluetooth controller, discovery and ordered automatic startup.
 13. Restore S6E3HA8 side RAM and the rounded-corner mask after real panel sleep.
 14. Control MAX77705 charging through its actual MODE charge bit and correct inhibited status.
-    Hardware mode stop tested; corrected kernel not yet boot-tested; see charging.md.
+    Corrected kernel booted; sysfs inhibit and hardware mode stop verified; see charging.md.
+15. Complete GNOME Mobile runtime typelibs/integration and accept an already active scale 3.
+    GNOME Wayland/Panfrost verified; the owner confirmed the visible shell. Touch/keyboard confirmation pending.
+
+16. Repair GNOME Mobile lock interfaces and explicit locking; add short/long power
+    handling and opt-in double-tap wake. The Shell repair is runtime-tested on the
+    phone; the native Settings Daemon/Mutter candidates compile and their gesture
+    tests pass. ARM64 deployment and physical tests remain required.
 
 The Ubuntu 26.10 profile is under image/ubuntu-26.10. Experimental audio and
 Bluetooth sources are under experiments, with firmware supplied by the owner.

@@ -128,6 +128,11 @@ EOF
     ln -sfn /usr/lib/systemd/system/sddm.service "$R/etc/systemd/system/display-manager.service"
 else
     printf 'FallbackSession=gnome\n' >> "$R/etc/gdm3/custom.conf"
+    install -d "$R/etc/systemd/user/org.gnome.Shell@.service.d"
+    cat > "$R/etc/systemd/user/org.gnome.Shell@.service.d/20-s9plus-touch-wakeup.conf" <<'EOF'
+[Service]
+Environment=MUTTER_TOUCHSCREEN_WAKEUP=double-tap
+EOF
     ln -sfn /usr/lib/systemd/system/gdm.service "$R/etc/systemd/system/display-manager.service"
     install -m 755 "$PROFILE/gnome-display.py" "$R/usr/local/bin/s9plus-gnome-display"
     EXEC=/usr/local/bin/s9plus-gnome-display

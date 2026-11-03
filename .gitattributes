@@ -1,3 +1,6 @@
 # Keep every file byte for byte as it is used on the device.
 * -text
 *.md text eol=lf
+
+# Unified-diff blank context lines contain a required single space.
+/image/gnome-mobile/patches/** whitespace=-blank-at-eol

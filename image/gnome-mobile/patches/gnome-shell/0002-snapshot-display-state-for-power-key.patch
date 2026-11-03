@@ -1,0 +1,15 @@
+--- a/js/ui/shellDBus.js
++++ b/js/ui/shellDBus.js
+@@ -294,6 +294,12 @@
+             'activation-token': GLib.Variant.new('s', token),
+         };
+ 
++        // Snapshot before gsd-power's asynchronous user-activity wake. This
++        // lets the mobile power policy distinguish waking from blanking.
++        const powerMode = Main.screenShield?.powerSaveMode;
++        if (powerMode !== undefined)
++            params['display-power-save-mode'] = GLib.Variant.new('i', powerMode);
++
+         const deviceNode = device.get_device_node();
+         if (deviceNode)
+             params['device-node'] = GLib.Variant.new('s', deviceNode);

@@ -66,6 +66,22 @@ before rebooting. If the rootfs helper reports mounted USERDATA, inspect and
 unmount the remaining TWRP mounts before retrying; do not bypass the check.
 Do not flash a raw kernel Image or a raw `m71-*/boot.img` in place of uniLoader.
 
+## Earlier GNOME bundle runtime repair
+
+The GNOME bundle built from `b301c53` passes static image checks but omits
+runtime typelibs needed by the mobile Shell. Its splash screen can remain
+visible while Linux and SSH are already running. Repair that bundle over SSH:
+
+```bash
+sudo apt-get update
+sudo apt-get install gir1.2-gnomeautoar-0.1 gir1.2-modemmanager-1.0 \
+    at-spi2-core libpam-gnome-keyring evolution-data-server
+sudo systemctl restart gdm
+```
+
+Package revision `0s9plus2` and subsequent image builds include this fix and
+validate the namespaces with GJS. The KDE bundle is unaffected.
+
 ## First boot
 
 The root filesystem expands to fill USERDATA, new SSH host keys are generated,

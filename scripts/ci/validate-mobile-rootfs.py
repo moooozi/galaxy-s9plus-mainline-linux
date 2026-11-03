@@ -44,8 +44,20 @@ def validate(root, variant, manifest_path):
     elif variant == 'gnome':
         lock = json.loads((Path(__file__).resolve().parents[2] / 'image/gnome-mobile/sources.json').read_text())
         require(lock['version'] in command('gnome-shell', '--version'), 'Stock GNOME Shell installed')
+        # --version never loads Shell's JavaScript. These mobile-only imports
+        # otherwise abort Shell or leave quick settings broken on first boot.
+        command('gjs', '-c',
+                "for (const [name, version] of Object.entries({GnomeAutoar: '0.1', "
+                "ModemManager: '1.0', Atspi: '2.0', NM: '1.0', NMA4: '1.0'})) { "
+                "imports.gi.versions[name] = version; void imports.gi[name]; }")
+        for package in ('at-spi2-core', 'libpam-gnome-keyring', 'evolution-data-server'):
+            require(command('dpkg-query', '-W', '-f', '${db:Status-Status}', package) ==
+                    'installed', f'Missing GNOME integration: {package}')
         require(not (root / 'usr/bin/startplasmamobile').exists(), 'Plasma leaked into GNOME image')
         require('FallbackSession=gnome' in (root / 'etc/gdm3/custom.conf').read_text(), 'Wrong GDM fallback')
+        wakeup = root / 'etc/systemd/user/org.gnome.Shell@.service.d/20-s9plus-touch-wakeup.conf'
+        require('MUTTER_TOUCHSCREEN_WAKEUP=double-tap' in wakeup.read_text(),
+                'Touchscreen wake is not enabled for the phone session')
         require((root / 'usr/share/wayland-sessions/gnome.desktop').is_file(), 'Missing GNOME session')
         schema = root / 'usr/share/glib-2.0/schemas/org.gnome.shell.gschema.xml'
         require('app-picker-layout-mobile' in schema.read_text(), 'Mobile Shell schema absent')

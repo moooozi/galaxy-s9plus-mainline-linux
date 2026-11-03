@@ -29,8 +29,9 @@ https://github.com/ianmacd/d2s/blob/master/drivers/battery_v2/max77705_charger.c
   A compiled C regression harness exercises its actual helper functions against
   a simulated register map, testing all 256 original byte values, stop/resume,
   disabled/full/charging status, and control/read failures.
-- **The corrected kernel has not yet been booted on the phone.** The one-shot
-  test establishes the hardware mode stop, not deployed sysfs correctness.
+- **The corrected kernel booted with the GNOME Mobile image on 2026-11-02.**
+  Writing sysfs `inhibit-charge` changed MODE to 4, reported Not charging and
+  stopped positive net charging current. This verifies deployed stop control.
 - **Autonomous end-of-charge termination has not been observed.** The gauge's
   Full label and a successful forced stop are not proof of autonomous cutoff.
   Existing CV 4.4 V, top-off 150 mA/30 minutes and disabled fast-charge timer

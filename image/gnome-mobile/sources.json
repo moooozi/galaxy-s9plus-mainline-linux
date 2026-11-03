@@ -1,7 +1,7 @@
 {
   "suite": "stonking",
   "version": "51.1.mobile.22",
-  "debian_version": "1:51.1.mobile.22-0s9plus1",
+  "debian_version": "1:51.1.mobile.22-0s9plus2",
   "components": [
     {
       "name": "gnome-settings-daemon",
