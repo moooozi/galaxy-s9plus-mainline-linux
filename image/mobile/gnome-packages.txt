@@ -19,3 +19,15 @@ gdm3
 at-spi2-core
 libpam-gnome-keyring
 evolution-data-server
+
+# Everyday desktop applications; office suites are intentionally omitted.
+gnome-software
+gnome-software-plugin-deb
+gnome-calculator
+gnome-clocks
+gnome-calendar
+file-roller
+papers
+loupe
+showtime
+gnome-music

@@ -23,6 +23,9 @@ def validate(root, variant, manifest_path):
     require('PAN_MAX_AFBC_PACKING_RATIO=0' in (root / 'etc/environment').read_text(), 'Missing GPU workaround')
     require('LIBGL_ALWAYS_SOFTWARE=1' not in (root / 'etc/environment').read_text(), 'Software rendering forced')
     require(command('passwd', '-S', 'root').split()[1] == 'L', 'Root account not locked')
+    for package in ('packagekit', 'appstream', 'apt-config-icons', 'apt-config-icons-hidpi'):
+        require(command('dpkg-query', '-W', '-f', '${db:Status-Status}', package) ==
+                'installed', f'Missing software-center integration: {package}')
     for module in ('fuse', 'snd-zrn-abox', 'hci_uart', 'zrn-bt'):
         vermagic = command('modinfo', '-k', manifest['release'], '-F', 'vermagic', module)
         require(vermagic.startswith(manifest['release'] + ' '), f'Wrong {module} kernel release')
@@ -32,7 +35,7 @@ def validate(root, variant, manifest_path):
     for target in ('sleep', 'suspend', 'hibernate', 'hybrid-sleep', 'suspend-then-hibernate'):
         require((root / f'etc/systemd/system/{target}.target').readlink() == Path('/dev/null'), f'{target} unmasked')
     if variant == 'kde':
-        for executable in ('plasma-open-settings', 'startplasmamobile', 'kscreen-doctor'):
+        for executable in ('plasma-open-settings', 'startplasmamobile', 'kscreen-doctor', 'plasma-discover'):
             require((root / 'usr/bin' / executable).is_file(), f'Missing {executable}')
         require(not (root / 'usr/bin/gnome-shell').exists(), 'GNOME Shell leaked into KDE image')
         require(not (root / 'usr/share/wayland-sessions/gnome.desktop').exists(), 'GNOME session leaked into KDE image')
@@ -50,7 +53,8 @@ def validate(root, variant, manifest_path):
                 "for (const [name, version] of Object.entries({GnomeAutoar: '0.1', "
                 "ModemManager: '1.0', Atspi: '2.0', NM: '1.0', NMA4: '1.0'})) { "
                 "imports.gi.versions[name] = version; void imports.gi[name]; }")
-        for package in ('at-spi2-core', 'libpam-gnome-keyring', 'evolution-data-server'):
+        for package in ('at-spi2-core', 'libpam-gnome-keyring', 'evolution-data-server',
+                        'gnome-software', 'gnome-software-plugin-deb'):
             require(command('dpkg-query', '-W', '-f', '${db:Status-Status}', package) ==
                     'installed', f'Missing GNOME integration: {package}')
         require(not (root / 'usr/bin/startplasmamobile').exists(), 'Plasma leaked into GNOME image')

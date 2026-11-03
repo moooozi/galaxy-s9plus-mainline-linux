@@ -21,3 +21,15 @@ sddm
 sddm-theme-breeze
 plasma-nm
 polkit-kde-agent-1
+
+# Everyday desktop applications; office suites are intentionally omitted.
+plasma-discover
+plasma-discover-notifier
+plasma-systemmonitor
+kalk
+kclock
+merkuro
+okular
+gwenview
+haruna
+elisa

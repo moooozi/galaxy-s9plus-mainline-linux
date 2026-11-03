@@ -56,5 +56,15 @@ rtkit
 xdg-utils
 xdg-desktop-portal
 xdg-desktop-portal-gtk
+# Software-center backend and application catalog (recommendations are disabled).
+packagekit
+appstream
+apt-config-icons
+apt-config-icons-hidpi
+# Common archive formats and media decoding for the selected desktop apps.
+zip
+unzip
+gstreamer1.0-plugins-good
+gstreamer1.0-libav
 # Mozilla's signed APT repository is installed by image/common/rootfs.
 firefox
