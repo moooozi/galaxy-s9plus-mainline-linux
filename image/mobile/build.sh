@@ -83,13 +83,15 @@ python3 "$REPO/scripts/ci/install-mobile-firefox.py" "$WORK/s9plus-mobile-firefo
 cp "$WORK/s9plus-mobile-firefox.deb" "$R/tmp/s9plus-mobile-firefox.deb"
 in_chroot "$R" dpkg -i /tmp/s9plus-mobile-firefox.deb
 rm "$R/tmp/s9plus-mobile-firefox.deb"
+# Leave global scaling automatic: forcing 3 makes Mutter advertise unsupported
+# preferred scales for lower modes. The display initializer owns first-run size.
 # Type the empty dconf string array; retain only the selected shell's policy.
 cat > "$R/etc/dconf/db/local.d/00-phone" <<'EOF'
 [org/gnome/desktop/a11y/applications]
 screen-keyboard-enabled=true
 
 [org/gnome/desktop/interface]
-scaling-factor=uint32 3
+scaling-factor=uint32 0
 gtk-theme='Adwaita'
 icon-theme='Adwaita'
 

@@ -46,6 +46,9 @@ def validate(root, variant, manifest_path):
             qml = root / f'usr/share/plasma/quicksettings/org.kde.plasma.quicksetting.{setting}/contents/ui/main.qml'
             require('plasma-open-settings ' + module in qml.read_text(), f'Broken {setting} quick setting')
     elif variant == 'gnome':
+        require(command('gsettings', 'get', 'org.gnome.desktop.interface',
+                        'scaling-factor') == 'uint32 0',
+                'Global scale override breaks per-resolution scale selection')
         lock = json.loads((Path(__file__).resolve().parents[2] / 'image/gnome-mobile/sources.json').read_text())
         require(lock['version'] in command('gnome-shell', '--version'), 'Stock GNOME Shell installed')
         # --version never loads Shell's JavaScript. These mobile-only imports

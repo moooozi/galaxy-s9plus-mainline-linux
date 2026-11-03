@@ -1,10 +1,19 @@
 #!/bin/sh
-# Initialize the known phone panel to a usable scale in Plasma, once per user.
+# Initialize the known phone panel to FHD+ at 250% in Plasma, once per user.
 [ "$XDG_CURRENT_DESKTOP" = KDE ] || exit 0
 marker="$HOME/.config/s9plus-plasma-display-initialized"
 [ -e "$marker" ] && exit 0
 for attempt in $(seq 1 30); do
-    if kscreen-doctor output.DSI-1.scale.3; then
+    # Resolve the advertised mode ID; do not round the panel refresh rate.
+    mode=$(kscreen-doctor --json | python3 -c '
+import json, sys
+outputs = json.load(sys.stdin)["outputs"]
+panel = next(o for o in outputs if o["name"] == "DSI-1")
+mode = next(m for m in panel["modes"]
+            if m["size"]["width"] == 1080 and m["size"]["height"] == 2220)
+print(mode["id"])
+') || mode=
+    if [ -n "$mode" ] && kscreen-doctor "output.DSI-1.mode.$mode" output.DSI-1.scale.2.5; then
         touch "$marker"
         exit 0
     fi

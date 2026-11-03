@@ -54,7 +54,13 @@ The shared mobile kernel advertises these modes to GNOME/KDE display settings:
 | HD+ | 720×1480 | 25% |
 
 Select a resolution under Settings → Displays and choose a comfortable scale.
-Native remains the preferred/default mode. Scaling the desktop UI alone does not
+Both mobile images initialize new users to FHD+ (1080×2220) at 250% scaling.
+The kernel still advertises native as its preferred mode; the desktop initializer
+selects FHD+ once and then preserves the user’s display choices. GNOME's global
+`scaling-factor` stays automatic (`0`), allowing Mutter to recommend a supported
+scale for each resolution: FHD+ 250%, HD+ about 167%. Forcing a global 300%
+scale makes Settings submit unsupported resolution/scale combinations.
+Scaling the desktop UI alone does not
 provide these lower panel-input modes. HD+ is 720×1480: the vendor header's
 720×1048 comment is a typo; its DSC PPS and page-address bytes encode 1480.
 
