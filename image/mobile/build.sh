@@ -77,6 +77,10 @@ if [ "$VARIANT" = gnome ]; then
 fi
 rootfs_configure "$R"
 rootfs_device "$R" "$REPO/device/base" "$REPO/device/configure.sh"
+python3 "$REPO/scripts/ci/install-mobile-firefox.py" "$WORK/s9plus-mobile-firefox.deb"
+cp "$WORK/s9plus-mobile-firefox.deb" "$R/tmp/s9plus-mobile-firefox.deb"
+in_chroot "$R" dpkg -i /tmp/s9plus-mobile-firefox.deb
+rm "$R/tmp/s9plus-mobile-firefox.deb"
 # Type the empty dconf string array; retain only the selected shell's policy.
 cat > "$R/etc/dconf/db/local.d/00-phone" <<'EOF'
 [org/gnome/desktop/a11y/applications]

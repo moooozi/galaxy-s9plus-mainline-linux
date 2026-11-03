@@ -23,7 +23,8 @@ def validate(root, variant, manifest_path):
     require('PAN_MAX_AFBC_PACKING_RATIO=0' in (root / 'etc/environment').read_text(), 'Missing GPU workaround')
     require('LIBGL_ALWAYS_SOFTWARE=1' not in (root / 'etc/environment').read_text(), 'Software rendering forced')
     require(command('passwd', '-S', 'root').split()[1] == 'L', 'Root account not locked')
-    for package in ('packagekit', 'appstream', 'apt-config-icons', 'apt-config-icons-hidpi'):
+    for package in ('packagekit', 'appstream', 'apt-config-icons', 'apt-config-icons-hidpi',
+                    's9plus-mobile-firefox'):
         require(command('dpkg-query', '-W', '-f', '${db:Status-Status}', package) ==
                 'installed', f'Missing software-center integration: {package}')
     for module in ('fuse', 'snd-zrn-abox', 'hci_uart', 'zrn-bt'):

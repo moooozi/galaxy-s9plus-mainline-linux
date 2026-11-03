@@ -29,3 +29,12 @@ decoders are listed explicitly rather than relying on desktop metapackages.
 The shared kernel enables RFKILL. GNOME uses its Bluetooth rfkill state to decide
 whether Bluetooth is available; a working BlueZ controller alone is insufficient
 for the GNOME toggle when the kernel omits that interface.
+
+Firefox includes the pinned postmarketOS mobile-config-firefox runtime as the
+`s9plus-mobile-firefox` package. On narrow windows it provides bottom navigation,
+touch controls, a tab menu and mobile website identification; `about:mobile`
+exposes its settings. We omit upstream enterprise policies so search engines,
+bookmarks and extensions remain the user's choice. Both fresh and existing
+profiles receive the runtime at Firefox startup. Restart Firefox after installing
+or removing the package. Remove it with `apt remove s9plus-mobile-firefox` to
+restore the desktop layout without deleting profiles.
