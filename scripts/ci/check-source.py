@@ -6,11 +6,12 @@ from pathlib import Path
 import subprocess
 
 REPO = Path(__file__).resolve().parents[2]
-for directory in ('scripts', 'image', 'experiments'):
+for directory in ('scripts', 'image', 'experiments', 'device'):
     for path in (REPO / directory).rglob('*'):
         if not path.is_file():
             continue
-        if path.suffix == '.py' or path.name in ('s9plus-bluetooth', 's9plus-boot-errors'):
+        if path.suffix == '.py' or path.name in ('s9plus-bluetooth', 's9plus-boot-errors',
+                                               's9plus-charging-generator', 's9plus-offline-charging'):
             ast.parse(path.read_text(), filename=str(path))
         elif path.suffix == '.sh' or path.name in ('s9plus-audio', 's9plus-plasma-display'):
             subprocess.run(['bash', '-n', str(path)], check=True)

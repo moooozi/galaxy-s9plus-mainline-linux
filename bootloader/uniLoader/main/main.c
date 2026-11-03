@@ -9,6 +9,9 @@
 #include <main/boot.h>
 #include <main/main.h>
 #include <lib/debug.h>
+#ifdef CONFIG_EXYNOS_9810
+#include <main/boot-fdt.h>
+#endif
 
 extern struct board_data board_ops;
 
@@ -25,8 +28,11 @@ static void print_splash(void)
 	printk(KERN_INFO, "welcome to uniLoader %s on %s\n", VER_TAG, board_ops.name);
 }
 
-void main(void* dt, void* kernel, void* ramdisk)
+void main(void* dt, void* kernel, void* ramdisk, void* boot_fdt)
 {
+#ifdef CONFIG_EXYNOS_9810
+	s9plus_boot_fdt_address = (unsigned long)boot_fdt;
+#endif
 	early_console_init();
 	INITCALL(board_ops.ops.early_init);
 

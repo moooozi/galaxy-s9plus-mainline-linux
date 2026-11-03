@@ -1,0 +1,142 @@
+#!/usr/bin/python3
+"""Select charger userspace from S-Boot's preserved FDT, before desktop startup."""
+import ctypes
+import json
+import mmap
+import os
+from pathlib import Path
+import struct
+import sys
+
+ADDRESS = 0x8A000000
+LIMIT = 0x200000
+TREE = Path('/sys/firmware/devicetree/base')
+
+
+def bootargs_from_fdt(data):
+    if len(data) < 40:
+        raise ValueError('Short FDT header')
+    magic, total, structure, strings, _, version, compatible, _, strings_size, structure_size = struct.unpack_from('>10I', data)
+    if magic != 0xD00DFEED or not 40 <= total <= min(len(data), LIMIT) or not 17 <= version or compatible > 17:
+        raise ValueError('Invalid FDT header')
+    end = structure + structure_size
+    if not 40 <= structure <= end <= total or not 40 <= strings <= strings + strings_size <= total:
+        raise ValueError('Invalid FDT sections')
+    pos, path, result = structure, [], None
+    while pos + 4 <= end:
+        token = struct.unpack_from('>I', data, pos)[0]
+        pos += 4
+        if token == 1:
+            stop = data.find(b'\0', pos, end)
+            if stop < 0 or len(path) > 128:
+                raise ValueError('Invalid FDT node')
+            path.append(data[pos:stop])
+            pos = (stop + 4) & ~3
+        elif token == 2:
+            if not path:
+                raise ValueError('Unbalanced FDT')
+            path.pop()
+        elif token == 3:
+            if pos + 8 > end:
+                raise ValueError('Short FDT property')
+            length, name = struct.unpack_from('>II', data, pos)
+            pos += 8
+            if not path or pos + length > end or name >= strings_size:
+                raise ValueError('Invalid FDT property')
+            stop = data.find(b'\0', strings + name, strings + strings_size)
+            if stop < 0:
+                raise ValueError('Invalid FDT property name')
+            if path == [b'', b'chosen'] and data[strings + name:stop] == b'bootargs':
+                if result is not None or not length or data[pos + length - 1] != 0:
+                    raise ValueError('Invalid bootargs')
+                result = data[pos:pos + length - 1].decode('ascii')
+            pos = (pos + length + 3) & ~3
+        elif token == 4:
+            continue
+        elif token == 9:
+            if path or result is None:
+                raise ValueError('Incomplete FDT')
+            return result
+        else:
+            raise ValueError('Unknown FDT token')
+    raise ValueError('No FDT end token')
+
+
+def is_charger(args):
+    modes = [token.split('=', 1)[1] for token in args.split() if token.startswith('androidboot.mode=')]
+    return modes == ['charger']
+
+
+def read_words(base, length, word=None):
+    # no-map DRAM is mapped as device memory. Every source read must be a
+    # naturally aligned word: pread/mmap slicing can use faulting bulk copies.
+    if not 0 <= length <= LIMIT:
+        raise ValueError('Read outside S-Boot reservation')
+    if word is None:
+        word = lambda address: ctypes.c_uint32.from_address(address).value
+    data = bytearray((length + 3) & ~3)
+    for offset in range(0, len(data), 4):
+        struct.pack_into('<I', data, offset, word(base + offset))
+    return bytes(data[:length])
+
+
+def read_mode(tree=TREE, memory='/dev/mem'):
+    address = (tree / 'chosen/s9plus,sboot-fdt-address').read_bytes()
+    reservation = tree / 'reserved-memory/sboot-fdt@8a000000'
+    if (len(address) != 8 or int.from_bytes(address, 'big') != ADDRESS or
+            (reservation / 'reg').read_bytes() != struct.pack('>III', 0, ADDRESS, LIMIT) or
+            not (reservation / 'no-map').exists()):
+        raise ValueError('Unreserved or unexpected S-Boot FDT address')
+    fd = os.open(memory, os.O_RDONLY | os.O_SYNC)
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
+                          ctypes.c_int, ctypes.c_int, ctypes.c_longlong]
+    libc.mmap.restype = ctypes.c_void_p
+    libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+    base = None
+    try:
+        base = libc.mmap(None, LIMIT, mmap.PROT_READ, mmap.MAP_SHARED, fd, ADDRESS)
+        if base == ctypes.c_void_p(-1).value:
+            base = None
+            raise OSError(ctypes.get_errno(), 'Cannot map preserved S-Boot FDT')
+        header = read_words(base, 40)
+        if len(header) != 40 or header[:4] != bytes.fromhex('d00dfeed'):
+            raise ValueError('Missing S-Boot FDT')
+        length = struct.unpack_from('>I', header, 4)[0]
+        if not 40 <= length <= LIMIT:
+            raise ValueError('S-Boot FDT outside reservation')
+        return 'charger' if is_charger(bootargs_from_fdt(read_words(base, length))) else 'normal'
+    finally:
+        if base is not None:
+            libc.munmap(base, LIMIT)
+        os.close(fd)
+
+
+def generate(early, mode, debug=False):
+    if mode != 'charger':
+        return
+    early.mkdir(parents=True, exist_ok=True)
+    (early / 'default.target').symlink_to('/etc/systemd/system/s9plus-offline-charging.target')
+    for name in ('plymouth-start.service', 's9plus-boot-errors.service'):
+        (early / name).symlink_to('/dev/null')
+    if debug:
+        wants = early / 's9plus-offline-charging.target.wants'
+        wants.mkdir()
+        for name in ('NetworkManager', 'ssh', 'systemd-user-sessions'):
+            (wants / (name + '.service')).symlink_to('/usr/lib/systemd/system/' + name + '.service')
+        (wants / 'usb-gadget.service').symlink_to('/etc/systemd/system/usb-gadget.service')
+
+
+if __name__ == '__main__':
+    mode, error = 'normal', None
+    try:
+        disabled = (Path('/etc/s9plus-charging.disable').exists() or
+                    's9plus.offline_charging=0' in Path('/proc/cmdline').read_text().split())
+        if not disabled:
+            mode = read_mode()
+    except (OSError, ValueError, UnicodeError) as exc:
+        error = str(exc)
+    state = Path('/run/s9plus-charging')
+    state.mkdir(exist_ok=True)
+    (state / 'boot-mode.json').write_text(json.dumps({'mode': mode, 'error': error}) + '\n')
+    generate(Path(sys.argv[2]), mode, Path('/etc/s9plus-charging.debug-usb').exists())

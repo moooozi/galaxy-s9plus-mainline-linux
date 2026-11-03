@@ -1,0 +1,257 @@
+#!/usr/bin/python3
+"""Minimal fbdev charging UI. No compositor, network, audio or suspend required."""
+import fcntl
+import json
+import mmap
+import os
+from pathlib import Path
+import select
+import signal
+import struct
+import subprocess
+import time
+
+ASSETS = Path('/usr/share/s9plus-charging')
+POWER = Path('/sys/class/power_supply')
+EVENT = struct.Struct('@llHHi')
+KEY_POWER = 116
+RUN = Path('/run/s9plus-charging')
+
+
+def number(path):
+    try:
+        return int(path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def sample(root=POWER):
+    # Never interpret an unreadable/missing supply as unplugged or 0%.
+    online = number(root / 'max77705-charger/online')
+    batteries = [p for p in root.glob('*') if (p / 'capacity').exists()]
+    cap = number(batteries[0] / 'capacity') if len(batteries) == 1 else None
+    if cap is not None and not 0 <= cap <= 100:
+        cap = None
+    return online, cap
+
+
+class Policy:
+    def __init__(self):
+        self.unplugged = None
+        self.pressed = None
+        self.visible_until = 12
+
+    def key(self, value, now):
+        if value == 1:
+            self.pressed = now
+            self.visible_until = now + 12
+        elif value == 0:
+            self.pressed = None
+
+    def step(self, now, online):
+        # Match Android charger's default grace period; replug cancels it.
+        if online == 0:
+            if self.unplugged is None:
+                self.unplugged = now
+        else:
+            self.unplugged = None
+        if self.unplugged is not None and now - self.unplugged >= 10:
+            return 'poweroff'
+        if self.pressed is not None and now - self.pressed >= 2:
+            return 'boot'
+        return 'show' if self.pressed is not None or now < self.visible_until else 'blank'
+
+
+class Framebuffer:
+    def __init__(self, device='/dev/fb0'):
+        self.fd = os.open(device, os.O_RDWR)
+        var = bytearray(160)
+        fix = bytearray(80)
+        fcntl.ioctl(self.fd, 0x4600, var, True)  # FBIOGET_VSCREENINFO
+        fcntl.ioctl(self.fd, 0x4602, fix, True)  # FBIOGET_FSCREENINFO
+        self.width, self.height, _, _, self.xoff, self.yoff, bpp = struct.unpack_from('7I', var)
+        self.stride = struct.unpack_from('I', fix, 48)[0]  # arm64 fb_fix_screeninfo
+        size = struct.unpack_from('I', fix, 24)[0]
+        red, green, blue = (struct.unpack_from('3I', var, n) for n in (32, 44, 56))
+        self.order = {(16, 0): 'BGRA', (0, 16): 'RGBA'}.get((red[0], blue[0]))
+        if (bpp != 32 or self.order is None or red[1:] != (8, 0) or
+                green != (8, 8, 0) or blue[1:] != (8, 0) or
+                self.stride < (self.width + self.xoff) * 4 or
+                size < self.stride * (self.height + self.yoff)):
+            os.close(self.fd)
+            raise RuntimeError('Unsupported framebuffer layout')
+        self.mem = mmap.mmap(self.fd, size)
+        self.console = os.open('/dev/tty0', os.O_RDWR | os.O_NOCTTY)
+        vt = bytearray(6)
+        fcntl.ioctl(self.console, 0x5603, vt, True)  # VT_GETSTATE
+        self.previous_vt = struct.unpack_from('H', vt)[0]
+        fcntl.ioctl(self.console, 0x5606, 1)  # VT_ACTIVATE
+        fcntl.ioctl(self.console, 0x5607, 1)  # VT_WAITACTIVE
+        # Prevent fbcon (including shutdown messages) from drawing over the UI.
+        self.tty = os.open('/dev/tty1', os.O_RDWR | os.O_NOCTTY)
+        fcntl.ioctl(self.tty, 0x4B3A, 1)  # KDSETMODE / KD_GRAPHICS
+        self.cache = None
+        self.blanked = None
+
+    def blank(self, value):
+        if self.blanked == value:
+            return
+        try:
+            fcntl.ioctl(self.fd, 0x4611, 4 if value else 0)  # FBIOBLANK
+        except OSError as exc:
+            # OLED fallback: all-black pixels even if DPMS is unavailable.
+            print(f'Framebuffer blank ioctl unavailable: {exc}', flush=True)
+            if value:
+                self.paint(bytes(self.width * self.height * 4))
+        self.blanked = value
+
+    def paint(self, data):
+        row = self.width * 4
+        for y in range(self.height):
+            offset = (y + self.yoff) * self.stride + self.xoff * 4
+            self.mem[offset:offset + row] = data[y * row:(y + 1) * row]
+
+    def show(self, capacity):
+        if self.cache is None or self.cache[0] != capacity:
+            image = render(capacity).resize((self.width, self.height))
+            self.cache = (capacity, image.convert('RGBA').tobytes('raw', self.order))
+        if self.blanked is not False or getattr(self, 'painted', None) != capacity:
+            self.paint(self.cache[1])
+            self.blank(False)
+            self.painted = capacity
+
+    def close(self):
+        self.blank(False)
+        fcntl.ioctl(self.tty, 0x4B3A, 0)  # KD_TEXT
+        os.close(self.tty)
+        fcntl.ioctl(self.console, 0x5606, self.previous_vt)
+        os.close(self.console)
+        self.mem.close()
+        os.close(self.fd)
+
+
+def render(capacity, assets=ASSETS):
+    from PIL import Image, ImageChops, ImageDraw, ImageFont
+    image = Image.open(assets / 'lpm.jpg').convert('RGB')
+    if capacity is not None:
+        glyphs = [Image.open(assets / f'sud_{n}.jpg').convert('RGB') for n in str(capacity)]
+        percent = Image.new('RGB', (72, 96), 'white')
+        ImageDraw.Draw(percent).text((0, 4), '%', font=ImageFont.load_default(size=80),
+                                     fill=(28, 195, 192))
+        glyphs.append(percent)
+        x = (image.width - sum(g.width for g in glyphs)) // 2
+        # Original 1440x2960 canvas: digits below the lightning, in the ring.
+        for glyph in glyphs:
+            # Vendor digit JPEGs use white as their background. Remove that
+            # background during composition so it does not form white boxes.
+            r, g, b = glyph.split()
+            mask = ImageChops.invert(ImageChops.darker(r, ImageChops.darker(g, b)))
+            mask = mask.point(lambda value: min(255, value * 255 // 220))
+            image.paste(glyph, (x, 1320), mask)
+            x += glyph.width
+    return image
+
+
+def power_keys():
+    keys = []
+    for device in Path('/dev/input').glob('event*'):
+        fd = os.open(device, os.O_RDONLY | os.O_NONBLOCK)
+        bits = bytearray(96)
+        try:
+            fcntl.ioctl(fd, 0x80604521, bits, True)  # EVIOCGBIT(EV_KEY, 96)
+            if bits[KEY_POWER // 8] & (1 << (KEY_POWER % 8)):
+                # Own this input while in charging mode so logind cannot also
+                # react to the same power press. Closing releases the grab.
+                fcntl.ioctl(fd, 0x40044590, 1)  # EVIOCGRAB
+                # Ignore the button already held to initiate this boot. The
+                # user must release and press it again to leave charger mode.
+                keys.append(fd)
+                continue
+        except OSError:
+            pass
+        os.close(fd)
+    return keys
+
+
+def transition(action):
+    if action == 'poweroff':
+        subprocess.run(['systemctl', '--no-block', 'poweroff'], check=True)
+    else:
+        subprocess.run(['systemctl', '--no-block', 'start', 'graphical.target', 'display-manager.service'], check=True)
+
+
+def main():
+    running = True
+
+    def stop(_signum, _frame):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    start = time.monotonic()
+    policy = Policy()
+    fb, keys = None, []
+    action = None
+    last_sample = -1
+    online, capacity = None, None
+    last_state = None
+    try:
+        while running:
+            now = time.monotonic() - start
+            if fb is None:
+                try:
+                    fb = Framebuffer()
+                except (OSError, RuntimeError) as exc:
+                    if int(now) % 10 == 0:
+                        print(f'Waiting for framebuffer: {exc}', flush=True)
+            if not keys:
+                keys = power_keys()
+            ready, _, _ = select.select(keys, [], [], 0.2)
+            for fd in ready:
+                try:
+                    data = os.read(fd, EVENT.size * 64)
+                    if not data:
+                        raise OSError('input device removed')
+                    for _, _, kind, code, value in EVENT.iter_unpack(data):
+                        if kind == 1 and code == KEY_POWER:
+                            policy.key(value, time.monotonic() - start)
+                except OSError:
+                    keys.remove(fd)
+                    os.close(fd)
+                    policy.pressed = None
+            if now - last_sample >= 1:
+                online, capacity = sample()
+                last_sample = now
+            action = policy.step(time.monotonic() - start, online)
+            state = {'action': action, 'online': online, 'capacity': capacity,
+                     'framebuffer': fb is not None, 'power_inputs': len(keys)}
+            if state != last_state:
+                print(json.dumps(state), flush=True)
+                RUN.mkdir(exist_ok=True)
+                temporary = RUN / 'state.tmp'
+                temporary.write_text(json.dumps(state) + '\n')
+                temporary.replace(RUN / 'state.json')
+                last_state = state
+            if action in ('boot', 'poweroff'):
+                print(f'Offline charging: {action}, capacity={capacity}', flush=True)
+                break
+            if fb:
+                if action == 'show':
+                    fb.show(capacity)
+                else:
+                    fb.blank(True)
+    finally:
+        for fd in keys:
+            os.close(fd)
+        if fb:
+            fb.close()
+    if running and action in ('boot', 'poweroff'):
+        transition(action)
+        # Stay alive until systemd terminates the service during transition.
+        while running:
+            time.sleep(0.2)
+
+
+if __name__ == '__main__':
+    main()

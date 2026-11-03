@@ -1,0 +1,19 @@
+[Unit]
+Description=Battery display and power key for offline charging
+After=systemd-udev-trigger.service s9p-touch-power.service
+Conflicts=display-manager.service getty@tty1.service
+Before=display-manager.service getty@tty1.service
+PartOf=s9plus-offline-charging.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/s9plus-offline-charging
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=s9plus-charging
+RuntimeDirectoryPreserve=yes
+TimeoutStopSec=5
+# Let the child systemctl finish acknowledging our request to stop this service.
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal

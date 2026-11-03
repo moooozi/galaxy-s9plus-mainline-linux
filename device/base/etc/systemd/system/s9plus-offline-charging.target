@@ -1,0 +1,6 @@
+[Unit]
+Description=Galaxy S9+ offline charging
+Requires=basic.target
+After=basic.target
+Wants=s9p-touch-power.service s9plus-offline-charging.service
+Conflicts=display-manager.service

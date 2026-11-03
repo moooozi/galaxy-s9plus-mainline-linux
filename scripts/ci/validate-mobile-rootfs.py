@@ -24,9 +24,16 @@ def validate(root, variant, manifest_path):
     require('LIBGL_ALWAYS_SOFTWARE=1' not in (root / 'etc/environment').read_text(), 'Software rendering forced')
     require(command('passwd', '-S', 'root').split()[1] == 'L', 'Root account not locked')
     for package in ('packagekit', 'appstream', 'apt-config-icons', 'apt-config-icons-hidpi',
-                    's9plus-mobile-firefox'):
+                    's9plus-mobile-firefox', 'python3-pil'):
         require(command('dpkg-query', '-W', '-f', '${db:Status-Status}', package) ==
                 'installed', f'Missing software-center integration: {package}')
+    for name in ('usr/lib/systemd/system-generators/s9plus-charging-generator',
+                 'usr/local/sbin/s9plus-offline-charging',
+                 'etc/systemd/system/s9plus-offline-charging.target',
+                 'etc/systemd/system/s9plus-offline-charging.service',
+                 'usr/share/s9plus-charging/lpm.jpg'):
+        require((root / name).is_file(), f'Missing offline charging file: {name}')
+    command('python3', '-c', 'from PIL import Image, ImageFont; ImageFont.load_default(size=80)')
     for module in ('fuse', 'snd-zrn-abox', 'hci_uart', 'zrn-bt'):
         vermagic = command('modinfo', '-k', manifest['release'], '-F', 'vermagic', module)
         require(vermagic.startswith(manifest['release'] + ' '), f'Wrong {module} kernel release')

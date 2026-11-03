@@ -119,6 +119,14 @@
 		#size-cells = <1>;
 		ranges;
 
+		/* uniLoader preserves S-Boot's incoming FDT address in /chosen.
+		 * Keep that FDT for userspace charger-boot detection, without parsing
+		 * or copying vendor data in the loader's early execution context. */
+		sboot-fdt@8a000000 {
+			reg = <0x0 0x8a000000 0x200000>;
+			no-map;
+		};
+
 		/*
 		 * Fixed firmware regions from the Samsung DT an SM-G965F runs with
 		 * (read back from TWRP's /sys/firmware/fdt). uniLoader
