@@ -26,9 +26,8 @@
  * NOT here: Maxim's speaker protection (DSM), which on the stock system runs
  * in the DSP against the current and voltage the amplifiers report. Until it
  * is, the analogue gain stays 3 dB under Samsung's and the boost converter's
- * output a little under theirs, and the speakers are protected by PipeWire's
- * speaker chain instead (rootfs/overlay/etc/pipewire/pipewire.conf.d/
- * 60-ztos-speaker-crossover.conf: high-pass and a lookahead limiter).
+ * output a little under theirs. The optional PipeWire speaker chain was
+ * removed at the user's request; playback uses the built-in speaker sink.
  */
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
@@ -56,6 +55,7 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/tlv.h>
+#include "s9plus-headphone-limit.h"
 #include <linux/arm-smccc.h>
 
 #define PMU_BASE		0x14060000
@@ -310,6 +310,26 @@ static DEFINE_MUTEX(amp_lock);
  * CS47L93 codec (SPI, bit-banged here) -> codec AIF1 TX -> ABOX UAIF0 (the
  * SoC drives the bit clock) -> NSRC0 -> SIFM0 -> WDMA1 -> the ALSA buffer.
  */
+static bool headphones = true;
+module_param(headphones, bool, 0444);
+static struct notifier_block abox_pm;
+static bool pm_registered;
+static bool headphone_attempted;
+static bool headphone_present;
+static bool speaker_enabled = true;
+static bool headphone_configured;
+static unsigned int headphone_volume = S9PLUS_HEADPHONE_VOLUME_MAX;
+static bool headphone_muted = true;
+static struct snd_kcontrol *headphone_jack_ctl;
+static int headphone_path_on(void);
+static bool headphone_ready;
+module_param(headphone_ready, bool, 0444);
+static bool jack_detect = true;
+module_param(jack_detect, bool, 0444);
+MODULE_PARM_DESC(jack_detect, "CS47L93 jack detection");
+static struct delayed_work jack_work;
+static int jack_raw = -1;
+module_param(jack_raw, int, 0444);
 static bool capture;
 module_param(capture, bool, 0444);
 MODULE_PARM_DESC(capture, "offer the main microphones as hw:0,2 (default off; see audio/MIC-REA.md)");
@@ -1191,6 +1211,8 @@ static void amp_set(bool on)
 	};
 	int i;
 
+	if (!READ_ONCE(speaker_enabled))
+		on = false;
 	mutex_lock(&amp_lock);
 	if (on && !amp_on) {
 		amp_both(0x0401, 0x01);		/* software reset */
@@ -1941,6 +1963,7 @@ static void codec_xfer(const u8 *tx, u8 *rx, int n)
 
 static void codec_write(u32 reg, u16 val)
 {
+	val = s9plus_headphone_limit(reg, val);
 	u8 tx[8] = { reg >> 24, reg >> 16, reg >> 8, reg, 0, 0, val >> 8, val }, rx[8];
 
 	codec_xfer(tx, rx, 8);
@@ -2097,6 +2120,67 @@ static int codec_power_up(void)
 	return 0;
 }
 
+/* LOS24 JD1+JD2 detection. Preserve the tested UAIF0 clock configuration
+ * across hotplug: only mute the headphone output stages on removal. */
+static void jack_poll(struct work_struct *work)
+{
+    u16 raw;
+    bool present, changed;
+    mutex_lock(&codec_lock);
+    raw = codec_read(0x1886);
+    mutex_unlock(&codec_lock);
+    if (raw != 0xffff) {
+        present = !(raw & 0x10);
+        changed = present != READ_ONCE(headphone_present);
+        WRITE_ONCE(jack_raw, raw);
+        mutex_lock(&stream_lock);
+        if (changed) {
+            WRITE_ONCE(headphone_present, present);
+            headphone_attempted = false;
+            if (!present) {
+                mutex_lock(&codec_lock);
+                codec_update(0x0400, 0x000c, 0);
+                mutex_unlock(&codec_lock);
+                headphone_ready = false;
+            }
+        }
+        /* Report the jack; the desktop chooses speaker/headphone switches.
+         * Only prepare the plugged codec here, without changing speaker state. */
+        if (headphones && present && !headphone_attempted) {
+            int ret;
+            headphone_attempted = true;
+            ret = headphone_path_on();
+            if (ret)
+                pr_err("snd-zrn-abox: headphone route setup failed %d\n", ret);
+        }
+        mutex_unlock(&stream_lock);
+        if (changed && headphone_jack_ctl)
+            snd_ctl_notify(card, SNDRV_CTL_EVENT_MASK_VALUE, &headphone_jack_ctl->id);
+    }
+    schedule_delayed_work(&jack_work, msecs_to_jiffies(500));
+}
+
+static int jack_detect_start(void)
+{
+    int ret = codec_power_up();
+    if (ret)
+        return ret;
+    mutex_lock(&codec_lock);
+    codec_update(0x0100, 0x43, 0x41); /* enable 32k, source MCLK2 */
+    codec_update(0x02c6, 0x0f, 8);    /* board MICD_CLAMP_MODE */
+    codec_update(0x1a06, 0x13, 0x13); /* JD1/JD2/clamp debounce */
+    codec_update(0x02d3, 3, 3);       /* JD1/JD2 analogue detection */
+    mutex_unlock(&codec_lock);
+    msleep(350);
+    mutex_lock(&codec_lock);
+    jack_raw = codec_read(0x1886);
+    mutex_unlock(&codec_lock);
+    if (jack_raw == 0xffff)
+        return -EIO;
+    headphone_present = !(jack_raw & 0x10);
+    return 0;
+}
+
 /*
  * The codec's clocks from the SoC's bit clock: FLL1 referenced to AIF1BCLK
  * (1.536 MHz = 48 kHz x 16 bit x 2), out 49.152 MHz, SYSCLK 98.304 MHz. That
@@ -2142,6 +2226,77 @@ static void codec_fll_off(void)
 	codec_update(CODEC_FLL1 + 0x1, 0x0001, 0);		/* ENA */
 	usleep_range(1000, 2000);
 	codec_update(CODEC_FLL1 + 0x2, 0x8000, 0);		/* CTRL_UPD */
+}
+
+/* HPOUT2 route from the LOS24 star2lte mixer configuration.
+ * Gain is capped on every codec write; no capture/call concurrency. */
+static int headphone_path_on(void)
+{
+    int ret;
+    u16 raw;
+    if (!jack_detect || capture || cp_vss)
+        return -EINVAL;
+    /* Port changes only gate output stages. Keep the tested UAIF/FLL clocks
+     * intact once configured, including during active playback. */
+    if (headphone_configured) {
+        mutex_lock(&codec_lock);
+        codec_update(0x0400, 0x000c, 0x000c);
+        mutex_unlock(&codec_lock);
+        headphone_ready = true;
+        return 0;
+    }
+    mutex_lock(&codec_lock);
+    raw = codec_read(0x1886);
+    mutex_unlock(&codec_lock);
+    if (raw == 0xffff)
+        return -EIO;
+    if (raw & 0x10) {
+        pr_info("snd-zrn-abox: headphones waiting for insertion\n");
+        return 0;
+    }
+    headphone_attempted = true;
+    cmu_div(CMU_DIV_UAIF0, 47);
+    writel(readl(cmu + CMU_MUX_UAIF0) & ~1U, cmu + CMU_MUX_UAIF0);
+    writel((readl(pins + GPB0_CON) & ~0xffff0U) | 0x22220, pins + GPB0_CON);
+    writel((9 << 24) | BIT(23) | (1 << 18) | (15 << 12), sfr + ABOX_UAIF0_CTRL1);
+    sfr_field(ABOX_ROUTE_CTRL0, 0, 0xf, 1); /* UAIF0 speaker <- SIFS0 */
+    writel(readl(sfr + ABOX_QCHANNEL_DISABLE) | BIT(2), sfr + ABOX_QCHANNEL_DISABLE);
+    writel(readl(sfr + ABOX_UAIF0_CTRL0) | BIT(2) | BIT(0), sfr + ABOX_UAIF0_CTRL0);
+    usleep_range(1000, 2000);
+    mutex_lock(&codec_lock);
+    codec_update(CODEC_AIF1_BCLK_CTRL, 0x0020, 0);
+    codec_update(CODEC_AIF1_RATE_CTRL, 0xf800, 0);
+    codec_update(CODEC_AIF1_FORMAT, 0x0007, 2);
+    codec_write(CODEC_AIF1_RX_BCLK_RATE, 32);
+    codec_write(CODEC_AIF1_FRAME_CTRL_1, (16 << 8) | 16);
+    codec_write(CODEC_AIF1_FRAME_CTRL_2, (16 << 8) | 16);
+    ret = codec_fll_on();
+    if (ret) {
+        pr_err("snd-zrn-abox: headphone FLL failed %d\n", ret);
+        mutex_unlock(&codec_lock);
+        return ret;
+    }
+    codec_write(CODEC_SAMPLE_RATE_1, 3);
+    codec_write(CODEC_SYSTEM_CLOCK_1, 0x0444);
+    codec_update(0x0408, 0x0007, 0); /* OUTCLK from SYSCLK */
+    codec_update(0x041a, 0x0007, 1); /* board HP2 ground1 */
+    codec_write(0x0419, (0x0300 | headphone_volume)); /* muted, capped gain + update latch */
+    codec_write(0x041d, (0x0300 | headphone_volume));
+    codec_write(0x0690, 0x0020); /* HPOUT2L <- AIF1RX1 */
+    codec_write(0x0698, 0x0021); /* HPOUT2R <- AIF1RX2 */
+    codec_update(0x051a, 3, 3); /* enable AIF1 receive channels */
+    codec_update(0x04a1, 0x1000, 0x1000); /* short-circuit protection */
+    codec_update(0x0299, 0x8000, 0); /* no HPDET override clamp */
+    codec_update(0x0400, 0x000c, 0x000c); /* OUT2 L+R */
+    usleep_range(12000, 14000);
+    codec_write(0x0419, (0x0200 | (headphone_muted ? 0x100 : 0) | headphone_volume));
+    codec_write(0x041d, (0x0200 | (headphone_muted ? 0x100 : 0) | headphone_volume));
+    headphone_ready = true;
+    headphone_configured = true;
+    pr_info("snd-zrn-abox: headphones ready: enable=%04x FLL=%04x\n",
+            codec_read(0x0400), codec_read(CODEC_IRQ1_RAW_STATUS_2));
+    mutex_unlock(&codec_lock);
+    return 0;
 }
 
 /* the route-main-mic path on: IN3L/IN3R (DMIC1, DMIC3) -> AIF1TX1/2 */
@@ -2651,6 +2806,94 @@ static const struct snd_kcontrol_new vol_control = {
 	.tlv.p = vol_tlv,
 };
 
+/* Hardware volume/mute for both headphone channels. codec_lock held. */
+static void headphone_volume_apply(void)
+{
+    u16 value = 0x0200 | (headphone_muted ? 0x0100 : 0) | headphone_volume;
+    if (cap.codec_up && codec_rst) {
+        codec_write(0x0419, value);
+        codec_write(0x041d, value);
+    }
+}
+static int headphone_vol_info(struct snd_kcontrol *k, struct snd_ctl_elem_info *i)
+{
+    i->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    i->count = 1;
+    i->value.integer.min = 0;
+    i->value.integer.max = S9PLUS_HEADPHONE_VOLUME_MAX;
+    return 0;
+}
+static int headphone_vol_get(struct snd_kcontrol *k, struct snd_ctl_elem_value *v)
+{
+    v->value.integer.value[0] = READ_ONCE(headphone_volume);
+    return 0;
+}
+static int headphone_vol_put(struct snd_kcontrol *k, struct snd_ctl_elem_value *v)
+{
+    unsigned int value = clamp_t(long, v->value.integer.value[0], 0, S9PLUS_HEADPHONE_VOLUME_MAX);
+    int changed;
+    mutex_lock(&codec_lock);
+    changed = value != headphone_volume;
+    headphone_volume = value;
+    headphone_volume_apply();
+    mutex_unlock(&codec_lock);
+    return changed;
+}
+static int headphone_switch_get(struct snd_kcontrol *k, struct snd_ctl_elem_value *v)
+{
+    v->value.integer.value[0] = !READ_ONCE(headphone_muted);
+    return 0;
+}
+static int headphone_switch_put(struct snd_kcontrol *k, struct snd_ctl_elem_value *v)
+{
+    bool muted = !v->value.integer.value[0];
+    int changed;
+    mutex_lock(&codec_lock);
+    changed = muted != headphone_muted;
+    headphone_muted = muted;
+    headphone_volume_apply();
+    mutex_unlock(&codec_lock);
+    return changed;
+}
+static int headphone_jack_get(struct snd_kcontrol *k, struct snd_ctl_elem_value *v)
+{
+    v->value.integer.value[0] = READ_ONCE(headphone_present);
+    return 0;
+}
+/* Standard ALSA speaker switch. Userspace owns output-selection policy. */
+static int speaker_switch_get(struct snd_kcontrol *k, struct snd_ctl_elem_value *v)
+{
+    v->value.integer.value[0] = READ_ONCE(speaker_enabled);
+    return 0;
+}
+static int speaker_switch_put(struct snd_kcontrol *k, struct snd_ctl_elem_value *v)
+{
+    bool enabled = !!v->value.integer.value[0];
+    int changed;
+    mutex_lock(&stream_lock);
+    changed = enabled != speaker_enabled;
+    WRITE_ONCE(speaker_enabled, enabled);
+    amp_set(enabled && any_active() && !call_route);
+    if (enabled && any_active() && !call_route)
+        writel(readl(sfr + ABOX_UAIF1_CTRL0) | BIT(0), sfr + ABOX_UAIF1_CTRL0);
+    mutex_unlock(&stream_lock);
+    return changed;
+}
+static const DECLARE_TLV_DB_SCALE(headphone_vol_tlv, -6400, 50, 0);
+static const struct snd_kcontrol_new headphone_controls[] = {
+    { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = "Headphone Playback Volume",
+      .access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READ,
+      .info = headphone_vol_info, .get = headphone_vol_get, .put = headphone_vol_put,
+      .tlv.p = headphone_vol_tlv },
+    { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = "Headphone Playback Switch",
+      .info = snd_ctl_boolean_mono_info, .get = headphone_switch_get, .put = headphone_switch_put },
+    { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = "Speaker Playback Switch",
+      .info = snd_ctl_boolean_mono_info, .get = speaker_switch_get, .put = speaker_switch_put },
+    { .iface = SNDRV_CTL_ELEM_IFACE_CARD, .name = "Headphone Jack",
+      .access = SNDRV_CTL_ELEM_ACCESS_READ | SNDRV_CTL_ELEM_ACCESS_VOLATILE,
+      .info = snd_ctl_boolean_mono_info, .get = headphone_jack_get },
+};
+
 static const char * const call_texts[] = { "Off", "Earpiece", "Speaker" };
 
 static int call_info(struct snd_kcontrol *k, struct snd_ctl_elem_info *info)
@@ -2850,12 +3093,17 @@ static int map_irq(void)
 
 static void teardown(void)
 {
-	int i;
+    int i;
+    if (pm_registered) {
+        unregister_pm_notifier(&abox_pm);
+        pm_registered = false;
+    }
 
+	cancel_delayed_work_sync(&jack_work);
 	cancel_delayed_work_sync(&watchdog_work);
 	if (card)
 		snd_card_free(card);
-	if (capture) {
+	if (capture || jack_detect) {
 		/* the codec back into reset; its supplies are left as found */
 		if (cap.path_on && started)
 			cap_path_off();
@@ -3223,9 +3471,13 @@ static int __init abox_init(void)
 	char v[4];
 	int i, ret;
 
+    if (headphones && (capture || cp_vss || !jack_detect)) {
+        return -EINVAL;
+    }
 	INIT_DELAYED_WORK(&gear_work, gear_tell);
 	INIT_DELAYED_WORK(&gear_again, gear_tell);
 	INIT_DELAYED_WORK(&watchdog_work, abox_watchdog);
+	INIT_DELAYED_WORK(&jack_work, jack_poll);
 	apm_init();
 	pdev = platform_device_register_simple("snd-zrn-abox", -1, NULL, 0);
 	if (IS_ERR(pdev))
@@ -3417,6 +3669,14 @@ static int __init abox_init(void)
 		ret = snd_ctl_add(card, snd_ctl_new1(&fx, NULL));
 	}
 	}
+    if (!ret && headphones) {
+        for (i = 0; i < ARRAY_SIZE(headphone_controls) && !ret; i++) {
+            struct snd_kcontrol *ctl = snd_ctl_new1(&headphone_controls[i], NULL);
+            ret = snd_ctl_add(card, ctl);
+            if (!ret && i == ARRAY_SIZE(headphone_controls) - 1)
+                headphone_jack_ctl = ctl;
+        }
+    }
 	if (!ret)
 		ret = snd_card_register(card);
 	if (ret)
@@ -3424,9 +3684,22 @@ static int __init abox_init(void)
 	ret = register_pm_notifier(&abox_pm);
 	if (ret)
 		goto err;
+	pm_registered = true;
 	pm_ready = true;
-	schedule_delayed_work(&watchdog_work, msecs_to_jiffies(113));
-	return 0;
+	if (jack_detect) {
+        ret = jack_detect_start();
+        if (ret)
+            goto err;
+        if (headphones) {
+            ret = headphone_path_on();
+            if (ret)
+                goto err;
+        }
+    }
+    if (headphones)
+        schedule_delayed_work(&jack_work, msecs_to_jiffies(500));
+    schedule_delayed_work(&watchdog_work, msecs_to_jiffies(113));
+    return 0;
 
 err:
 	teardown();
@@ -3435,14 +3708,13 @@ err:
 
 static void __exit abox_exit(void)
 {
-	unregister_pm_notifier(&abox_pm);
 	teardown();
 }
 
 module_init(abox_init);
 module_exit(abox_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Galaxy S9 (Exynos 9810) speakers: ABOX DSP and MAX98512 amplifiers");
+MODULE_DESCRIPTION("Galaxy S9 audio: ABOX, MAX98512, gain-capped CS47L93 headphones");
 MODULE_FIRMWARE("calliope_sram.bin");
 MODULE_FIRMWARE("calliope_dram.bin");
 MODULE_FIRMWARE("calliope_iva.bin");

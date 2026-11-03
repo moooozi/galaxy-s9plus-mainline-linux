@@ -5,6 +5,9 @@ cd /work/.build/src/mainline
 export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 out=/work/.build/audio-work/out
 driver=/work/.build/audio-work/driver
+# Always compile the maintained source and its mandatory hardware gain guard.
+mkdir -p "$driver"
+cp /work/experiments/audio/driver/* "$driver/"
 mkdir -p "$out"
 if [ ! -f "$out/.config" ]; then
     cp out/.config "$out/.config"

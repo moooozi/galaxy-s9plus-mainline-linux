@@ -119,8 +119,8 @@ For speaker playback, supply `calliope_sram.bin`, `calliope_dram.bin` and
 `/usr/lib/firmware/`. You can copy them out from an existing installation or
 locate them in TWRP with VENDOR mounted read-only. Do not format VENDOR.
 Then run `sudo systemctl start s9plus-audio.service` and reboot to initialize
-the desktop audio graph. The protected `s9plus-speaker` output is the default;
-retain its high-pass filter, crossover, limiter and conservative driver gains.
+the desktop audio graph. Select the built-in speaker output; the duplicate
+software speaker filter has been removed. Retain the conservative driver gains.
 
 For Bluetooth, write **your phone's own EFS Bluetooth address**, in colon-separated
 hex format, to `/var/lib/s9plus-bluetooth/bt_addr`. Keep its directory mode 0700,
@@ -143,8 +143,10 @@ The port's watchdog may return a failed warm boot to TWRP; inspect pstore and
 serial logs before repeating the flash. For a kernel-only rollback, keep the
 old kernel's matching modules in the rootfs.
 
-Suspend, cameras, cellular/call audio, microphones and headphones are not
-established by these builds. Experimental speaker playback and Bluetooth
+Suspend, cameras and cellular/call audio are not established by these builds;
+microphone capture is disabled. Experimental speaker and capped 3.5 mm headphone
+playback, manual output selection and jack switching were user-confirmed on
+the development phone. Bluetooth
 controller/discovery were tested on the development phone; Bluetooth pairing
 and audio streaming still need verification. Sporadic Panfrost faults also
 remain. GNOME Mobile and the new SDDM image need their own visual/input testing;
