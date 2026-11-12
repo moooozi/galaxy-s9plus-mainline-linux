@@ -30,6 +30,7 @@
  * removed at the user's request; playback uses the built-in speaker sink.
  */
 #include <linux/delay.h>
+#include <linux/atomic.h>
 #include <linux/dma-mapping.h>
 #include <linux/firmware.h>
 #include <linux/gpio/consumer.h>
@@ -56,6 +57,7 @@
 #include <sound/pcm_params.h>
 #include <sound/tlv.h>
 #include "s9plus-headphone-limit.h"
+#include "s9plus-abox-fault.h"
 #include <linux/arm-smccc.h>
 
 #define PMU_BASE		0x14060000
@@ -219,6 +221,7 @@
 #define  SOUND_TYPE_VOICE	0
 #define  SOUND_TYPE_SPEAKER	1
 #define  ABOX_CHANGED_GEAR	9
+#define  ABOX_REPORT_FAULT	0xfa /* Samsung IPC: param1=1 is a data abort */
 #define CMU_DIV_PLL		0x1820
 #define AUD_PLL_HZ		1179648000UL
 
@@ -228,7 +231,18 @@ static void *dram, *iva, *vss, *vparam, *lv1, *lv2, *voice_rx, *voice_tx, *dsm_o
 static dma_addr_t dram_pa, iva_pa, vss_pa, vparam_pa, lv1_pa, lv2_pa, voice_rx_pa, voice_tx_pa, dsm_out_pa, dsm_vi_pa;
 static int lv2_used = 1;	/* table 0 stays empty: what unmapped space points at */
 static bool started, booted;
-static bool suspending, dsp_fault, irq_quiesced;
+static bool suspending, dsp_fault;
+static atomic_t irq_quiesced = ATOMIC_INIT(0);
+static DEFINE_SPINLOCK(firmware_fault_lock);
+static struct s9plus_abox_fault firmware_fault;
+static unsigned int firmware_fault_params[4], firmware_fault_regs[16];
+static bool firmware_fault_regs_valid;
+module_param_named(firmware_fault_reports, firmware_fault.reports, uint, 0444);
+module_param_named(firmware_fault_recoveries, firmware_fault.recoveries, uint, 0444);
+module_param_named(firmware_fault_blocked, firmware_fault.blocked, int, 0444);
+module_param_array(firmware_fault_params, uint, NULL, 0444);
+module_param_array(firmware_fault_regs, uint, NULL, 0444);
+module_param(firmware_fault_regs_valid, bool, 0444);
 static void dsp_recover(void);
 static const struct firmware *fw_sram, *fw_dram, *fw_iva;
 static struct snd_pcm *playback[2];
@@ -241,6 +255,26 @@ static DEFINE_SPINLOCK(ipc_lock);
 static int abox_irq;
 static struct task_struct *rx_task;	/* only when the interrupt could not be had */
 static struct snd_card *card;
+
+/* The fault handler can run in hard IRQ context. Exactly one disable is
+ * paired with a later boot's enable, even when recovery or PM also quiesces.
+ * Process context waits outside the atomic transition for the handler to end.
+ */
+static void abox_irq_quiesce(bool sync)
+{
+	if (abox_irq <= 0)
+		return;
+	if (!atomic_xchg(&irq_quiesced, 1))
+		disable_irq_nosync(abox_irq);
+	if (sync)
+		synchronize_irq(abox_irq);
+}
+
+static void abox_irq_resume(void)
+{
+	if (abox_irq > 0 && atomic_xchg(&irq_quiesced, 0))
+		enable_irq(abox_irq);
+}
 /*
  * Two playback devices, two of the DSP's eight playback DMAs (RDMA0 and
  * RDMA1): its mixer sums every stream into SIFS0 and on to the speakers, so
@@ -763,8 +797,48 @@ static void gear_tell(struct work_struct *work)
 	ipc_send(m, 6);
 }
 
-/* Whatever the DSP has put in its mailbox for us: a period has been played,
- * or housekeeping of its own that needs no answer here. */
+/* Called with the mailbox lock held, before ACK lets firmware reuse its
+ * payload or saved register buffer. Never dereference an arbitrary DSP IOVA.
+ * Samsung's saved buffer contains r0..r14 followed by the exception PC.
+ */
+static void abox_firmware_fault(const u32 *msg)
+{
+	u32 address = msg[6];
+	bool first;
+
+	spin_lock(&firmware_fault_lock);
+	first = s9plus_abox_fault_report(&firmware_fault);
+	if (first) {
+		memcpy(firmware_fault_params, msg + 3, sizeof(firmware_fault_params));
+		memset(firmware_fault_regs, 0, sizeof(firmware_fault_regs));
+		firmware_fault_regs_valid = false;
+		if (s9plus_abox_fault_range(address, 0, ABOX_SRAM_SIZE,
+					    sizeof(firmware_fault_regs))) {
+			memcpy_fromio(firmware_fault_regs, sram + address,
+				      sizeof(firmware_fault_regs));
+			firmware_fault_regs_valid = true;
+		} else if (s9plus_abox_fault_range(address, IOVA_DRAM, DRAM_SIZE,
+						   sizeof(firmware_fault_regs))) {
+			memcpy(firmware_fault_regs, dram + (address - IOVA_DRAM),
+			       sizeof(firmware_fault_regs));
+			firmware_fault_regs_valid = true;
+		} else if (s9plus_abox_fault_range(address, IOVA_IVA, IVA_SIZE,
+						   sizeof(firmware_fault_regs))) {
+			memcpy(firmware_fault_regs, iva + (address - IOVA_IVA),
+			       sizeof(firmware_fault_regs));
+			firmware_fault_regs_valid = true;
+		}
+	}
+	spin_unlock(&firmware_fault_lock);
+	WRITE_ONCE(booted, false);
+	WRITE_ONCE(dsp_fault, true);
+	abox_irq_quiesce(false);
+	if (first)
+		pr_err("snd-zrn-abox: firmware fault %u (%08x, %08x), saved GPR %08x; watchdog recovery pending\n",
+			msg[3], msg[4], msg[5], address);
+}
+
+/* Receive a period notification, housekeeping, or an explicit firmware fault. */
 static void rx_one(void)
 {
 	u32 id, type, msg[11];
@@ -778,6 +852,8 @@ static void rx_one(void)
 	}
 	/* Once acknowledged, the firmware may reuse every payload word. */
 	memcpy_fromio(msg, sram + IPC_RX, sizeof(msg));
+	if (msg[0] == IPC_SYSTEM && msg[2] == ABOX_REPORT_FAULT)
+		abox_firmware_fault(msg);
 	writel(0, sram + IPC_RX_ACK);
 	spin_unlock_irqrestore(&rx_lock, flags);
 	id = msg[0];
@@ -787,7 +863,10 @@ static void rx_one(void)
 		pr_info("snd-zrn-abox: from DSP: id %u task %d: %u %08x %08x %08x\n", id, msg[1],
 			type, msg[3], msg[4], msg[5]);
 	}
-	if (id == IPC_SYSTEM && type == 3) {
+	if (id == IPC_SYSTEM && type == ABOX_REPORT_FAULT) {
+		/* Already captured/quiesced before ACK; never sleep or reset here. */
+		return;
+	} else if (id == IPC_SYSTEM && type == 3 && !READ_ONCE(firmware_fault.pending)) {
 		fw_version = msg[5];
 		booted = true;
 	} else if (id == IPC_ERAP) {
@@ -888,7 +967,7 @@ static irqreturn_t abox_isr(int irq, void *unused)
 static int rx_fn(void *unused)
 {
 	while (!kthread_should_stop()) {
-		if (!READ_ONCE(suspending))
+		if (!READ_ONCE(suspending) && !READ_ONCE(firmware_fault.pending))
 			rx_one();
 		usleep_range(900, 1100);
 	}
@@ -3170,6 +3249,10 @@ static int dsp_boot(void)
 	u32 m[6] = { 0 };
 	char v[4];
 	int i, ret;
+	unsigned long flags;
+
+	if (READ_ONCE(firmware_fault.blocked))
+		return -EIO;
 
 	booted = false;
 	WRITE_ONCE(dsp_fault, false);
@@ -3207,10 +3290,10 @@ static int dsp_boot(void)
 	memset(streams[1].buf, 0, BUFFER_BYTES);
 
 
-	if (irq_quiesced) {
-		enable_irq(abox_irq);
-		irq_quiesced = false;
-	}
+	spin_lock_irqsave(&firmware_fault_lock, flags);
+	s9plus_abox_fault_begin_boot(&firmware_fault);
+	spin_unlock_irqrestore(&firmware_fault_lock, flags);
+	abox_irq_resume();
 	writel(0x1, sfr + ABOX_SYSPOWER_CTRL);		/* it may use its DRAM */
 	pmu_update(PMU_ABOX_CPU_CFG, 0x1, 0x1);
 	pmu_update(PMU_ABOX_CPU_OPTION, ABOX_CPU_ENABLE, ABOX_CPU_ENABLE);
@@ -3304,10 +3387,7 @@ static int abox_pm_event(struct notifier_block *nb, unsigned long event, void *u
 			for (j = 0; j < effects[i].count; j++)
 				saved_effects[i][j] = readl(sram + EFFECTS + effects[i].base + 0x10 + j * 4);
 		amp_set(false);
-		if (abox_irq > 0) {
-			disable_irq(abox_irq);
-			irq_quiesced = true;
-		}
+		abox_irq_quiesce(true);
 		cancel_delayed_work_sync(&gear_work);
 		cancel_delayed_work_sync(&gear_again);
 		core_off();
@@ -3351,9 +3431,18 @@ module_param(dsp_restarts, uint, 0444);
 /* a DSP restart goes through a power cycle of the whole block */
 static bool recover_power_cycle;
 module_param(recover_power_cycle, bool, 0644);
-/* write 1: restart the DSP through a power cycle now (for testing) */
+/* Explicit retry; power cycling still requires recover_power_cycle=1. */
 static int restart_now_set(const char *val, const struct kernel_param *kp)
 {
+	unsigned long flags;
+	bool restart;
+	int ret = kstrtobool(val, &restart);
+
+	if (ret || !restart)
+		return ret ?: -EINVAL;
+	spin_lock_irqsave(&firmware_fault_lock, flags);
+	s9plus_abox_fault_manual_retry(&firmware_fault);
+	spin_unlock_irqrestore(&firmware_fault_lock, flags);
 	WRITE_ONCE(dsp_fault, true);
 	return 0;
 }
@@ -3366,6 +3455,8 @@ static void dsp_recover(void)
 {
 	static unsigned long next_retry;
 	int i, j, ret;
+	unsigned long flags;
+	bool retry;
 
 	if (time_before(jiffies, next_retry))
 		return;
@@ -3383,12 +3474,19 @@ static void dsp_recover(void)
 			snd_pcm_stop_xrun(cap.active);
 	}
 	amp_set(false);
-	if (abox_irq > 0) {
-		disable_irq(abox_irq);
-		irq_quiesced = true;
-	}
+	abox_irq_quiesce(true);
 	cancel_delayed_work_sync(&gear_work);
 	cancel_delayed_work_sync(&gear_again);
+	spin_lock_irqsave(&firmware_fault_lock, flags);
+	retry = s9plus_abox_fault_recover(&firmware_fault);
+	spin_unlock_irqrestore(&firmware_fault_lock, flags);
+	if (!retry) {
+		WRITE_ONCE(booted, false);
+		WRITE_ONCE(dsp_fault, false);
+		pm_ready = false;
+		pr_err("snd-zrn-abox: firmware fault recovery limit reached; audio IRQ quiesced, explicit restart required\n");
+		return;
+	}
 	for (i = 0; i < ARRAY_SIZE(effects); i++)
 		for (j = 0; j < effects[i].count; j++)
 			saved_effects[i][j] = readl(sram + EFFECTS + effects[i].base + 0x10 + j * 4);

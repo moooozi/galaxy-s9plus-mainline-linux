@@ -1,0 +1,90 @@
+{
+  "repository": "https://github.com/Zerone-Laboratories/ztOS",
+  "commit": "7f42ddc3ba468e4e21c7145cbb973f5aa57d5358",
+  "files": [
+    {
+      "path": "devices/samsung-starlte/overlay/usr/local/sbin/zrn-android-root",
+      "sha256": "2f288391b32d4c943826d182006a804615825ac9c0a71a21bc62f19aa38fe295"
+    },
+    {
+      "path": "devices/samsung-starlte/overlay/usr/local/sbin/ztoscsf-sensorhub",
+      "sha256": "696b3670983e8a2b673ad3b5e0b96b8ae7352f5ab0be58e060bcbe423665a7c7"
+    },
+    {
+      "path": "sensors/driver/Makefile",
+      "sha256": "dbd1ca085e725f95db16e194686f2b09310233ff64d332e96cf1a8a9f05ba1d8"
+    },
+    {
+      "path": "sensors/driver/bbd.c",
+      "sha256": "8fd250c052a351f70a67c9b3570447a4258ad4a1f1a4f854f6231080aced0050"
+    },
+    {
+      "path": "sensors/driver/bbd.h",
+      "sha256": "55cb4764eacd2952d420c3ef8295d51545f48fdc9c27e0866af07d25fbd31c54"
+    },
+    {
+      "path": "sensors/driver/bbd_rpc_lh.c",
+      "sha256": "ab530d252e9d6bcd829bb274f5bcf8ceaecbef7f7e5c101c8d9ebe4bde1d933e"
+    },
+    {
+      "path": "sensors/driver/bcm_dbg.c",
+      "sha256": "ca2e33c1c5c34d3445824d6c3016591c588a466ec42b87bd8738dd23b45a293e"
+    },
+    {
+      "path": "sensors/driver/bcm_gps_hostwake.c",
+      "sha256": "25309f18608b2380ac8a31562775bee82c2c4beb4a6bc183e9c7de8283a3679d"
+    },
+    {
+      "path": "sensors/driver/bcm_gps_hostwake.h",
+      "sha256": "096e16a5d4daef8ed3e19d7690b8d127b56593d2bf69f88a6ca4690ab5786f19"
+    },
+    {
+      "path": "sensors/driver/bcm_gps_mem.c",
+      "sha256": "0e0e9fdeb60797e4fa0f5c5d6bf1f9d5a0c2c4bbf3e28cba742fca1f1c8665eb"
+    },
+    {
+      "path": "sensors/driver/bcm_gps_regs.c",
+      "sha256": "65f7216fff1b777669858da4f4c7c9d5b8c96a295d85a306b4c045adb6d35035"
+    },
+    {
+      "path": "sensors/driver/bcm_gps_spi.c",
+      "sha256": "e972b53442f2d807f4cadb258b1fcff09df76ea52b200fb46de0dad4e52013f3"
+    },
+    {
+      "path": "sensors/driver/bcm_gps_spi.h",
+      "sha256": "15e6c186066b657b526d70b271353b96ac11ae6845d3835d8dd7b3ce382a5ce6"
+    },
+    {
+      "path": "sensors/driver/linux/ssp_platformdata.h",
+      "sha256": "8f3a883dfeb428c76cf0ef494924010c8a8decfb0e2cdddacbcfc6215165b6d8"
+    },
+    {
+      "path": "sensors/driver/linux/wakelock.h",
+      "sha256": "5fae1a6400e72b2dd54c0f03c54f5a9c8a38ddc03bde9c75bfb8e0e3de2dcae6"
+    },
+    {
+      "path": "sensors/driver/p_os/bbd_patch_file_star.h",
+      "sha256": "618f529480c965e063c1b805a66710deadb74a71a9d0476d3229ccac27bead2c"
+    },
+    {
+      "path": "sensors/driver/q_os/bbd_patch_file_star.h",
+      "sha256": "caa68a42a4cd426573745430814fc318b4f6776f1b64bacb06b46ff40f8d4e36"
+    },
+    {
+      "path": "sensors/driver/zrn_bbd_board.c",
+      "sha256": "389a248251d7c214b605e19347f8df4009bf615e65203bdae7ca9cb45562d3b6"
+    },
+    {
+      "path": "sensors/driver/zrn_compat.h",
+      "sha256": "5bee3e482a2d4b90610fef707e4e64405ea007dd8bbd95228f46818cf04e9d11"
+    },
+    {
+      "path": "sensors/zrn-ssp.py",
+      "sha256": "bedd31e58fb438c657dffd7b7458a63855c8faa4080bf0ae2635c5eec4b29db8"
+    },
+    {
+      "path": "ztmetro/sensord/ztoscsf-sensord.c",
+      "sha256": "0b520e05f15bff7eca970672ea3fbb7a610270283676908a69ccabeecd283871"
+    }
+  ]
+}

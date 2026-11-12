@@ -31,3 +31,10 @@ They are included so `WLAN=1` builds do not race a firmware loader at boot.
 - Owner-specific Calliope audio firmware and Bluetooth identity are not
   distributed in public images. Existing board Wi-Fi/Bluetooth firmware remains
   subject to the firmware attribution above.
+- BCM4773 transport and conservative Exynos9810 C2/MCT idle implementation:
+  Zerone-Laboratories/ztOS at `7f42ddc3ba468e4e21c7145cbb973f5aa57d5358`.
+  Kernel files retain GPL-2.0/vendor notices; sensor userspace derivatives use
+  GPL-3.0-only. Original file hashes, adaptations and firmware provenance are in
+  `experiments/sensors/SOURCE.md`, `experiments/cpuidle/SOURCE.md` and their
+  `upstream.json` manifests. Embedded Broadcom sensor patch headers come from
+  the vendor kernel; the proprietary Android runtime and `lhd` are not bundled.

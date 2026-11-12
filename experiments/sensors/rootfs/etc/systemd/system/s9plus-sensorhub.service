@@ -1,0 +1,20 @@
+[Unit]
+Description=Galaxy S9+ BCM4773 firmware and sensor transport
+After=local-fs.target
+Requires=dev-disk-by\x2dpartlabel-SYSTEM.device dev-disk-by\x2dpartlabel-VENDOR.device
+After=dev-disk-by\x2dpartlabel-SYSTEM.device dev-disk-by\x2dpartlabel-VENDOR.device
+ConditionPathExists=!/etc/s9plus-sensors.disable
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/local/sbin/s9plus-sensorhub
+Restart=no
+KillMode=control-group
+TimeoutStartSec=60
+TimeoutStopSec=8
+StateDirectory=s9plus-sensorhub
+RuntimeDirectory=s9plus-sensorhub
+
+[Install]
+WantedBy=multi-user.target

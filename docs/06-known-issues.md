@@ -2,11 +2,41 @@
 
 Honest list. Everything here has been reproduced on the device.
 
-## CPU idle does not work
+## CPU idle: A55 CPUs 2 and 3 work; wider idle remains unsupported
 
-Deep CPU idle remains a major power-management gap. The current kernel uses
-`WFI`; the contribution of each powered block to idle temperature has not been
+A port of ztOS's flexible-PMU C2 sequence and MCT hardware broadcast timer is
+now built into the kernel from `src/cpuidle/`;
+[`experiments/cpuidle`](../experiments/cpuidle/README.md) documents the bring-up.
+It is installed and enabled on this S9+ for `7.3.1-s9plus`, accepting only
+A55 CPUs 2 and 3. Both cores passed 100 pinned 10 ms timer wakeups, load/idle
+transitions, independent two-minute confirmation and a normal reboot. C2
+counters and MCT G0 IRQs advance; late-event count stayed zero. GNOME and Wi-Fi
+SSH remained active. The November12 built-in kernel#8 also passed the pinned waits and independent
+confirmation with zero MCT write failures/late events. C2 starts disabled; the
+persistent userspace guard enables only the validated cores through cpuidle
+sysfs. No kallsyms or private function-address module parameters are required.
+No whole-device power saving is claimed. No deeper DT
+states, cluster powerdown, hotplug, system suspend or voltage reductions are
+enabled. Other cores retain WFI. Future images enable the conservative service.
+
+The following failures describe the earlier DT-based attempts and remain
+relevant constraints, rather than proof the built-in driver succeeds or fails.
+
+Deep CPU idle remains a major power-management gap. Only CPUs2/3 have the
+validated C2 state; other cores use `WFI`. The contribution of each powered block to idle temperature has not been
 isolated with a whole-device power measurement.
+
+Kernel #6 corrects confirmed star2lte A55 suspend-context hash aliases. Raw
+MT-style A55 identities are normalized to firmware/DT affinity before hashing
+on both save and resume. The patched assembly gives all eight cores distinct
+context slots; live tests retain the validated CPUs2/3 mask. This removes one
+known blocker, without establishing broader core/cluster or SoC idle. Activity
+captures also found about996audio DSP interrupts/s with closed playback streams;
+both captures were interrupted by screen wake, so neither establishes screen-off
+power consumption. On November12 the new audio handler recognized these as
+firmware fault reports, performed a bounded DSP restart, and the audio IRQ count
+stayed unchanged during a120sdiagnostic interval. The underlying firmware fault
+is unresolved; this observation is not a whole-device power measurement.
 
 Four attempts, all reproduced:
 
@@ -44,6 +74,32 @@ writes every kernel message and a state line per minute (clocks, rail,
 temperatures, Wi-Fi) to `/var/log/s9p-blackbox.log`, fsync'ed. The journal
 does not keep kernel messages of a boot that hung, so after a freeze that
 file is where the last minute is.
+
+## Sensors: revised reset passes two warm reboots; calibration pending
+
+[`experiments/sensors`](../experiments/sensors/README.md) ports the BCM4773
+transport and firmware service from ztOS. Light, accelerometer and gyro samples
+are published through real IIO devices for the standard `iio-sensor-proxy`.
+The transport and IIO modules load on the phone. Its owner-provided Android
+runtime mounts read-only; vendor `lhd` runs with vendor libraries and a private
+legacy-wakelock shim (system suspend must stay masked). Firmware downloading
+works after a passage through TWRP. Corrected SSP write accounting and firmware
+gyro-frame sizes allow continuous real IIO samples. SensorProxy detects light
+and acceleration, and GNOME rotation is user-observed; the mount matrix is
+being calibrated with physical feedback. A normal warm reboot initially
+reproduced `ROM SYNC failure`; parking the hub pins and removing its dedicated
+supply at shutdown passed the subsequent normal-reboot test. A later November4
+boot failed ROM synchronization again, and a bounded supply-cut trial on
+November12 also failed. The shutdown fix does not establish reliable startup.
+The durable failed-initialization marker intentionally blocks automatic retries.
+Recovery pinctrl then exposed missing SCK/MOSI pull-downs: the revised transport
+explicitly drives those AP outputs low while retaining MISO as an input. It
+passed two consecutive normal reboots after TWRP recovery on November 12, with
+live light/motion samples and automatic firmware loading. These observed tests
+do not establish every future startup condition. Device
+dependencies prevent mounting before SYSTEM/VENDOR links appear. The reader
+is enabled with a failed-initialization guard. Auto-brightness, camera and GNSS
+are not claimed to work.
 
 ## Wi-Fi drops and never comes back
 

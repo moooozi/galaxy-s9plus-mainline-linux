@@ -25,8 +25,11 @@ class ModuleInstallationTests(unittest.TestCase):
         self.artifact.mkdir()
         self.name = 'usr/lib/modules/7.3.9-s9plus/kernel/fs/fuse/fuse.ko'
         self.data = b'test module bytes'
+        self.compat = b'test sensor compatibility library'
+        (self.artifact / 'libwakelock-no-suspend.so').write_bytes(self.compat)
         self.manifest = {'release': '7.3.9-s9plus', 'modules': [
-            {'path': self.name, 'sha256': hashlib.sha256(self.data).hexdigest()}]}
+            {'path': self.name, 'sha256': hashlib.sha256(self.data).hexdigest()}],
+            'sensor_compat_sha256': hashlib.sha256(self.compat).hexdigest()}
 
     def archive(self, name=None, *, kind=tarfile.REGTYPE, payload=None):
         (self.artifact / 'kernel-manifest.json').write_text(json.dumps(self.manifest))
@@ -71,6 +74,22 @@ class ModuleInstallationTests(unittest.TestCase):
         self.archive(payload=b'corrupted module')
         with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
             self.install()
+
+    def test_sensor_library_checksum_mismatch_is_rejected(self):
+        self.archive()
+        (self.artifact / 'libwakelock-no-suspend.so').write_bytes(b'corrupted')
+        with self.assertRaisesRegex(ValueError, 'compatibility library checksum mismatch'):
+            self.install()
+
+    def test_sensor_library_cannot_follow_an_external_symlink(self):
+        self.archive()
+        outside = Path(self.temp.name) / 'outside'
+        outside.mkdir()
+        (self.root / 'usr/local').mkdir()
+        (self.root / 'usr/local/lib').symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, 'destination escapes'):
+            self.install()
+        self.assertEqual(list(outside.iterdir()), [])
 
     def test_unexpected_module_set_is_rejected(self):
         self.archive(self.name + '.extra.ko')

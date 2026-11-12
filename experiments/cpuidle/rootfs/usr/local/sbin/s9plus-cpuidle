@@ -1,0 +1,92 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0
+"""Enable built-in A55 C2 behind a persistent failed-initialization marker."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+STATE = Path('/var/lib/s9plus-cpuidle')
+MARK = STATE / 'loading'
+PARAMS = Path('/sys/module/s9plus_cpuidle/parameters')
+
+
+def counters():
+    return [int(Path(f'/sys/devices/system/cpu/cpu{cpu}/cpuidle/state1/usage').read_text())
+            for cpu in (2, 3)]
+
+
+def disable_states(states):
+    failures = []
+    for state in states:
+        try:
+            (state / 'disable').write_text('1\n')
+        except OSError as exc:
+            failures.append(f'{state}: {exc}')
+    if failures:
+        raise RuntimeError('Could not disable all C2 states: ' + '; '.join(failures))
+
+
+def confirm():
+    if not MARK.exists() or MARK.read_text() != Path('/proc/sys/kernel/random/boot_id').read_text():
+        raise SystemExit('No CPU idle trial marker for this boot; refusing confirmation')
+    if not (PARAMS / 'integrated').exists() or (PARAMS / 'integrated').read_text().strip() != 'Y':
+        raise SystemExit('Requires the integrated S9PLUS_CPUIDLE kernel driver')
+    states = [Path(f'/sys/devices/system/cpu/cpu{cpu}/cpuidle/state1') for cpu in (2, 3)]
+    for state in states:
+        if (state / 'name').read_text().strip() != 'C2' or (state / 'disable').read_text().strip() != '0':
+            raise SystemExit('Expected C2 state is not enabled; marker retained')
+    try:
+        before = counters()
+        irq_before = int((PARAMS / 'g0_irqs').read_text())
+        time.sleep(3)
+        after = counters()
+        if not all(new > old for old, new in zip(before, after)):
+            raise SystemExit('C2 counters did not advance on both A55 cores; marker retained')
+        if int((PARAMS / 'g0_irqs').read_text()) <= irq_before:
+            raise SystemExit('No fresh MCT broadcast interrupts; marker retained')
+    except BaseException:
+        disable_states(states)
+        raise
+    MARK.unlink(missing_ok=True)
+    os.sync()
+    print(f'A55 CPUs 2,3 C2 counters advanced: {before} -> {after}')
+
+
+def main():
+    if os.geteuid() != 0:
+        raise SystemExit('Run as root')
+    if sys.argv[1:] == ['confirm']:
+        confirm()
+        return
+    if sys.argv[1:]:
+        raise SystemExit('usage: s9plus-cpuidle [confirm]')
+    if MARK.exists():
+        raise SystemExit(f'Previous CPU idle initialization did not finish. Inspect logs before removing {MARK}')
+    if not (PARAMS / 'integrated').exists() or (PARAMS / 'integrated').read_text().strip() != 'Y':
+        raise SystemExit('Requires the integrated S9PLUS_CPUIDLE kernel driver')
+    states = [Path(f'/sys/devices/system/cpu/cpu{cpu}/cpuidle/state1') for cpu in (2, 3)]
+    for state in states:
+        if (state / 'name').read_text().strip() != 'C2':
+            raise SystemExit(f'Unexpected CPU idle state at {state}')
+        if (state / 'disable').read_text().strip() != '1':
+            raise SystemExit(f'C2 must start disabled at {state}')
+    counters()
+    STATE.mkdir(parents=True, exist_ok=True)
+    MARK.write_text(Path('/proc/sys/kernel/random/boot_id').read_text())
+    os.sync()
+    try:
+        subprocess.run(['systemd-run', '--quiet', '--collect',
+                        '--unit=s9plus-cpuidle-confirm', '--on-active=120',
+                        '/usr/local/sbin/s9plus-cpuidle', 'confirm'], check=True)
+        for state in states:
+            (state / 'disable').write_text('0\n')
+    except BaseException:
+        disable_states(states)
+        raise
+    print('Built-in C2 enabled for A55 CPUs 2,3; confirmation scheduled in two minutes')
+
+
+if __name__ == '__main__':
+    main()

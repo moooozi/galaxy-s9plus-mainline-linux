@@ -45,3 +45,22 @@ With the corrected kernel, request a stop through
 `/sys/class/power_supply/max77705-charger/charge_behaviour` by writing
 `inhibit-charge` as root. Verify battery current and charger status rather than
 relying on capacity alone. Writing `auto` resumes the existing charging policy.
+
+## Driver review on 2026-11-12
+
+The AICL current-reduction loop now stops at the 100 mA hardware minimum and
+has a finite iteration bound even if another writer keeps raising the limit.
+It previously could underflow the unsigned field and wrap back to a high
+input-current setting. Current setters now use the input field's `(code+1)`
+encoding and clamp the six-bit charge-current field to 3.15 A, preventing a
+3.2 A request from wrapping to code zero. These bounds describe register
+encoding; they are not a recommendation to increase charging current.
+
+Property getters propagate register-read failures, prequalification reports
+defined battery health, and initialization fails if float-voltage or watchdog
+configuration writes fail. The existing charge-inhibit mode transition is
+unchanged. Host C regressions exercise the real functions against simulated
+registers, including every integer request in the supported current ranges,
+field limits, stuck AICL and bus errors. New hardware validation is recorded
+separately in the session status; these simulations do not establish physical
+charge termination or a persistent capacity limit.

@@ -23,6 +23,7 @@ PY
 SRC=$WORK/src/mainline
 "$REPO/scripts/build/apply_drivers.sh" "$SRC"
 python3 "$REPO/experiments/bluetooth/patch-btbcm-s9plus.py" "$SRC"
+python3 "$REPO/experiments/cpuidle/verify-suspend-hash.py" "$SRC"
 mkdir -p "$SRC/out" "$WORK/initramfs/bin" "$WORK/initramfs/dev"
 install -m 755 "$WORK/out/busybox-arm64" "$WORK/initramfs/bin/busybox"
 for applet in $(qemu-aarch64-static "$WORK/initramfs/bin/busybox" --list); do
@@ -62,6 +63,7 @@ scripts/config --file out/.config --set-str INITRAMFS_SOURCE "$WORK/initramfs $W
 make O=out olddefconfig
 # Desktop Bluetooth availability relies on the kernel's real rfkill interface.
 grep -qx 'CONFIG_RFKILL=y' out/.config
+grep -qx 'CONFIG_S9PLUS_CPUIDLE=y' out/.config
 make O=out -j"$(nproc)" Image exynos/exynos9810-star2lte.dtb
 # Reuse the same explicit module targets used by the successful phone build.
 make O=out -j"$(nproc)" fs/fuse/fuse.ko sound/soundcore.ko sound/core/snd.ko \
@@ -70,10 +72,15 @@ make O=out -j"$(nproc)" fs/fuse/fuse.ko sound/soundcore.ko sound/core/snd.ko \
     net/bluetooth/rfcomm/rfcomm.ko net/bluetooth/bnep/bnep.ko net/bluetooth/hidp/hidp.ko \
     drivers/bluetooth/btbcm.ko drivers/bluetooth/hci_uart.ko \
     crypto/kpp.ko crypto/ecc.ko crypto/ecdh_generic.ko crypto/cmac.ko crypto/aes.ko \
-    drivers/hid/hid.ko drivers/hid/hid-generic.ko drivers/hid/uhid.ko
-for kind in audio bluetooth; do
+    drivers/hid/hid.ko drivers/hid/hid-generic.ko drivers/hid/uhid.ko \
+    drivers/iio/industrialio.ko
+for kind in audio bluetooth sensors; do
     mkdir -p "$WORK/$kind-driver"
-    cp "$REPO/experiments/$kind/driver/"* "$WORK/$kind-driver/"
+    cp -a "$REPO/experiments/$kind/driver/." "$WORK/$kind-driver/"
     make O=out M="$WORK/$kind-driver" -j"$(nproc)" modules
 done
+mkdir -p "$WORK/sensors-compat"
+aarch64-linux-gnu-gcc -shared -nostdlib -fPIC -Wl,-soname,libwakelock-no-suspend.so \
+    -o "$WORK/sensors-compat/libwakelock-no-suspend.so" \
+    "$REPO/experiments/sensors/compat/wakelock-no-suspend.c"
 python3 "$REPO/scripts/ci/package-mobile-kernel.py" "$WORK" "$OUT" "$SOURCE_MANIFEST"

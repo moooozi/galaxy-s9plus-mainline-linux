@@ -1,0 +1,97 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Publish BCM4773 light and motion readings through the kernel IIO bridge."""
+import fcntl
+import json
+import os
+from pathlib import Path
+import signal
+import struct
+import sys
+import time
+
+sys.path.insert(0, '/usr/local/lib/s9plus-sensors')
+from ssp import Hub, ProtocolError
+
+
+def main():
+    stopping = False
+
+    def stop(*_):
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    with open('/run/s9plus-sensorhub/reader.lock', 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd = os.open('/dev/zrn_ssp', os.O_RDWR | os.O_NONBLOCK)
+        output = os.open('/dev/s9plus_sensor_samples', os.O_WRONLY)
+        counts = {}
+        latest = {}
+
+        def publish(sensor, values):
+            message = struct.pack('<Iiii', sensor, *values)
+            if os.write(output, message) != len(message):
+                raise ProtocolError('short IIO sample write')
+            counts[sensor] = counts.get(sensor, 0) + 1
+            latest[sensor] = {'values': values, 'monotonic': time.monotonic()}
+
+        hub = Hub(fd, publish)
+        enabled = []
+        try:
+            # Drain unsolicited startup data before issuing commands. A hub reset
+            # after this point ends the session rather than reusing old state.
+            try:
+                hub.pump(0.2)
+            except ProtocolError as error:
+                if 'hub restarted' not in str(error):
+                    raise
+                hub.raw.clear()
+                hub.stream.clear()
+            chip = hub.call(0x0f, read=1)
+            mask = int.from_bytes(hub.call(0xf4, read=8), 'little')
+            print(f'BCM4773 chip={chip.hex()} sensors={mask:#x}', flush=True)
+            hub.timestamp()
+            for sensor, period in ((9, 1000), (0, 200), (1, 200)):
+                if mask & (1 << sensor):
+                    hub.call(0xa1, struct.pack('<BiiB', sensor, period, 0, 0))
+                    enabled.append(sensor)
+            if not enabled:
+                raise ProtocolError('none of the supported sensors is available')
+            started = time.monotonic()
+            next_status = started
+            next_time = started + 10
+            while not stopping:
+                hub.pump(0.5)
+                now = time.monotonic()
+                if now >= next_time:
+                    hub.timestamp()
+                    next_time = now + 10
+                if now >= next_status:
+                    if Path('/sys/class/sec/sensorhub/ready').read_text().strip() != '1':
+                        raise ProtocolError('hub lost readiness')
+                    # Motion samples should stream continuously. Never leave stale
+                    # IIO devices behind when firmware/transport stops delivering.
+                    for sensor in enabled:
+                        if sensor in (0, 1) and now - latest.get(sensor, {}).get('monotonic', started) > 15:
+                            raise ProtocolError(f'sensor {sensor} stopped reporting')
+                    path = Path('/run/s9plus-sensorhub/samples.json')
+                    temporary = path.with_suffix('.tmp')
+                    temporary.write_text(json.dumps({'counts': counts, 'latest': latest}) + '\n')
+                    temporary.replace(path)
+                    next_status = now + 2
+        finally:
+            if stopping and hub.pending is None:
+                for sensor in enabled:
+                    try:
+                        hub.call(0xa2, struct.pack('<Bi', sensor, 0))
+                    except (OSError, ProtocolError):
+                        break
+            # Closing the bridge removes its IIO devices, including on failure.
+            os.close(output)
+            os.close(fd)
+
+
+if __name__ == '__main__':
+    main()

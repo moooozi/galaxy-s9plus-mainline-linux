@@ -84,5 +84,8 @@ install -m644 "$PROJ/src/gpu/drm/s9p/s9p-decon.c" \
 sed -i 's/\r$//' "$SRC/drivers/gpu/drm/s9p/s9p-decon.c" \
 	"$SRC/drivers/gpu/drm/s9p/Kconfig" "$SRC/drivers/gpu/drm/s9p/Makefile"
 
+echo "--- built-in A55 idle and MCT broadcast ---"
+install -m644 "$PROJ/src/cpuidle/s9plus-idle.c" "$SRC/drivers/cpuidle/" || exit 1
 python3 "$PROJ/scripts/build/patch_tree.py" "$SRC" || exit 1
+python3 "$PROJ/experiments/cpuidle/patch-suspend-hash.py" "$SRC" || exit 1
 echo "APPLY_DRIVERS_OK"

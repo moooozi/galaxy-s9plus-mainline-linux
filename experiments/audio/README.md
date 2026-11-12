@@ -102,3 +102,49 @@ is68 (-30dB). `Headphone Jack` exposes insertion state. The desktop selects
 the output using the standard playback switches. Capture and voice paths
 must stay disabled in this profile. Playback loudness still varies with source
 material and headphones; the ceiling is a relative hardware gain bound.
+
+## Firmware fault handling — November 12 validation
+
+The November 4 trace's system message250 (`0xfa`) is **ABOX_REPORT_FAULT**,
+not periodic housekeeping. The pinned LineageOS24 kernel's
+`include/sound/samsung/abox_ipc.h` assigns that value, and
+`sound/soc/samsung/abox/abox.c:abox_system_ipc_handler` identifies param1=1 as
+a data abort. Its raw param2/3 were5/`fffffff4`; the cause is not established.
+Source revision: ExyHyperBrick/android_kernel_samsung_exynos9810
+`e5906667068efe49ad6a5494296f77965f2e5c5e`.
+Pinned sources: [IPC values and message layout](https://github.com/ExyHyperBrick/android_kernel_samsung_exynos9810/blob/e5906667068efe49ad6a5494296f77965f2e5c5e/include/sound/samsung/abox_ipc.h),
+[fault handler](https://github.com/ExyHyperBrick/android_kernel_samsung_exynos9810/blob/e5906667068efe49ad6a5494296f77965f2e5c5e/sound/soc/samsung/abox/abox.c),
+and [saved-register layout](https://github.com/ExyHyperBrick/android_kernel_samsung_exynos9810/blob/e5906667068efe49ad6a5494296f77965f2e5c5e/sound/soc/samsung/abox/abox_dbg.c).
+
+The driver recognizes this notification before acknowledging its mailbox.
+It retains four raw fault words and, when the firmware's saved-register pointer
+fits completely inside owned SRAM/DRAM/IVA memory, r0..r14 and the saved PC.
+Other pointers remain raw diagnostics and are never dereferenced. This follows
+the register layout in the same revision's `abox_dbg.c`.
+
+A fault marks the DSP unavailable and quiesces its AP interrupt without sleeping
+in the handler. The existing watchdog stops media streams and mutes the speaker
+amplifiers, then uses the existing DSP restart path. The default remains
+**no audio-domain power cycle**. At most three recovery attempts are allowed
+after a firmware fault, with the existing five-second minimum between attempts.
+A new firmware boot never resets that budget. Exhaustion keeps audio unavailable
+and its interrupt quiesced until an explicit `restart_now=1` or module reload.
+The fallback mailbox poller skips reception while a firmware fault is pending.
+
+Read-only diagnostics under `/sys/module/snd_zrn_abox/parameters/`:
+
+- `firmware_fault_reports`, `firmware_fault_recoveries`, `firmware_fault_blocked`
+- `firmware_fault_params`: raw param1, param2, param3, saved-register address
+- `firmware_fault_regs_valid`, `firmware_fault_regs`: whether the address was
+  inside a supported mapping and the sixteen captured register words
+
+Host regression tests replay repeated fault bursts, firmware boots, recovery
+budget exhaustion, explicit retries, counter saturation and dump-pointer bounds.
+The module compiles against the kernel-integration build and passed a phone
+trial on kernel #8. A startup firmware exception caused one automatic recovery;
+a subsequent 120.181 s diagnostic interval had no additional audio IRQs with
+both streams closed. Three-second low-amplitude direct ALSA playback completed
+without another DSP restart or stream-watchdog recovery. Two normal reboots
+retained the bounded startup recovery behavior. The underlying exception is
+unresolved, and battery savings or fresh audible/headphone verification are not
+claimed. The previous matching module remains available for rollback.

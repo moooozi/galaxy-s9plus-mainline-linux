@@ -1,0 +1,64 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Based on ztOS zrn-android-root; only the owner phone's read-only partitions.
+set -euo pipefail
+R=/run/s9plus-sensor-android
+STATE=/var/lib/s9plus-sensorhub
+exec 9>/run/s9plus-sensor-android.lock
+flock 9
+if mountpoint -q "$R"; then
+    test -d "$R/system/bin"
+    test -f "$R/vendor/bin/hw/lhd"
+    mkdir -p "$R/compat"
+    if ! mountpoint -q "$R/compat"; then
+        mount --bind /usr/local/lib/s9plus-sensors/compat "$R/compat"
+        mount -o remount,bind,ro "$R/compat"
+    fi
+    exit 0
+fi
+mkdir -p "$R" "$STATE/data/vendor/gps" "$STATE/data/system/gps"
+mount -t tmpfs -o mode=755,size=2m tmpfs "$R"
+trap 'umount -R "$R" || true' ERR
+mkdir -p "$R"/{system,vendor,apex/com.android.runtime,dev,proc,sys,data,tmp,compat,partitions/system}
+# ext4 noload prevents journal replay even on a read-only mount.
+mount -t ext4 -o ro,noload /dev/disk/by-partlabel/SYSTEM "$R/partitions/system"
+mount -t ext4 -o ro,noload /dev/disk/by-partlabel/VENDOR "$R/vendor"
+SYSTEM=$R/partitions/system
+test ! -d "$SYSTEM/system/bin" || SYSTEM=$SYSTEM/system
+mount --bind "$SYSTEM" "$R/system"
+mount -o remount,bind,ro "$R/system"
+test -f "$R/vendor/bin/hw/lhd"
+test -f "$R/vendor/etc/sensor/lhd.conf"
+if [ -d "$SYSTEM/apex/com.android.runtime.release" ]; then
+    mount --bind "$SYSTEM/apex/com.android.runtime.release" "$R/apex/com.android.runtime"
+elif [ -d "$SYSTEM/apex/com.android.runtime" ]; then
+    mount --bind "$SYSTEM/apex/com.android.runtime" "$R/apex/com.android.runtime"
+elif [ -f "$SYSTEM/apex/com.android.runtime.apex" ]; then
+    # Modern Android ships runtime as an APEX containing an ext4 payload.
+    python3 - "$SYSTEM/apex/com.android.runtime.apex" "$STATE/runtime.img" <<'PY'
+import pathlib, shutil, sys, zipfile
+target = pathlib.Path(sys.argv[2])
+temporary = target.with_suffix('.tmp')
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    with archive.open('apex_payload.img') as src, temporary.open('wb') as dst:
+        shutil.copyfileobj(src, dst)
+temporary.replace(target)
+PY
+    mount -t ext4 -o loop,ro,noload "$STATE/runtime.img" "$R/apex/com.android.runtime"
+else
+    echo 'No supported Android runtime APEX; sensor firmware service cannot start' >&2
+    exit 1
+fi
+mount --rbind /dev "$R/dev"
+mount --make-rslave "$R/dev"
+umount -l "$R/dev/binderfs" 2>/dev/null || true
+mount --make-rprivate "$R/dev"
+mount -t proc proc "$R/proc"
+mount --rbind /sys "$R/sys"
+mount --make-rslave "$R/sys"
+mount --bind "$STATE/data" "$R/data"
+mount --bind /usr/local/lib/s9plus-sensors/compat "$R/compat"
+mount -o remount,bind,ro "$R/compat"
+ln -s system/bin "$R/bin"
+ln -s system/etc "$R/etc"
+trap - ERR

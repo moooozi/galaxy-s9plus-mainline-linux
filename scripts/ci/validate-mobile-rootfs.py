@@ -34,9 +34,23 @@ def validate(root, variant, manifest_path):
                  'usr/share/s9plus-charging/lpm.jpg'):
         require((root / name).is_file(), f'Missing offline charging file: {name}')
     command('python3', '-c', 'from PIL import Image, ImageFont; ImageFont.load_default(size=80)')
-    for module in ('fuse', 'snd-zrn-abox', 'hci_uart', 'zrn-bt'):
+    for module in ('fuse', 'snd-zrn-abox', 'hci_uart', 'zrn-bt', 'industrialio',
+                   'zrn-bbd', 's9plus-sensor-iio'):
         vermagic = command('modinfo', '-k', manifest['release'], '-F', 'vermagic', module)
         require(vermagic.startswith(manifest['release'] + ' '), f'Wrong {module} kernel release')
+    require(command('modinfo', '-k', manifest['release'], '-F', 'filename',
+                    's9plus-cpuidle') == '(builtin)', 'CPU idle is not built in')
+    for service in ('s9plus-sensorhub', 's9plus-sensors', 's9plus-cpuidle'):
+        require((root / f'etc/systemd/system/{service}.service').is_file(),
+                f'Missing experimental hardware service: {service}')
+    require(command('systemctl', 'is-enabled', 's9plus-cpuidle.service') == 'enabled',
+            'Verified conservative CPU idle service is disabled')
+    require(command('systemctl', 'is-enabled', 's9plus-sensors.service') == 'enabled',
+            'Verified IIO sensor service is disabled')
+    require((root / 'usr/lib/udev/rules.d/61-s9plus-sensor-mount.rules').is_file(),
+            'Missing device accelerometer mount matrix')
+    require((root / 'usr/local/lib/s9plus-sensors/compat/libwakelock-no-suspend.so').is_file(),
+            'Missing private sensor wakelock compatibility library')
     for service in ('NetworkManager', 'first-boot-ssh-keys', 'grow-rootfs', 'usb-gadget',
                     's9p-touch-power', 's9p-stability', 's9p-wifi-guard', 's9plus-audio', 's9plus-bluetooth'):
         require(command('systemctl', 'is-enabled', service + '.service') == 'enabled', f'{service} is disabled')

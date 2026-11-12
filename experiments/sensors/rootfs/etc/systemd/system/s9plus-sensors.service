@@ -1,0 +1,13 @@
+[Unit]
+Description=Galaxy S9+ light and motion sensors through IIO
+BindsTo=s9plus-sensorhub.service
+After=s9plus-sensorhub.service
+ConditionPathExists=!/etc/s9plus-sensors.disable
+
+[Service]
+ExecStart=/usr/local/sbin/s9plus-sensord
+Restart=no
+TimeoutStopSec=8
+
+[Install]
+WantedBy=multi-user.target

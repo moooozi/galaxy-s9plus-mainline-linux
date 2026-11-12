@@ -20,6 +20,7 @@ MODULE_PATHS = [
     'drivers/bluetooth/btbcm.ko', 'drivers/bluetooth/hci_uart.ko',
     'crypto/kpp.ko', 'crypto/ecc.ko', 'crypto/ecdh_generic.ko', 'crypto/cmac.ko',
     'crypto/aes.ko', 'drivers/hid/hid.ko', 'drivers/hid/hid-generic.ko', 'drivers/hid/uhid.ko',
+    'drivers/iio/industrialio.ko',
 ]
 
 
@@ -33,6 +34,9 @@ def main():
     src = work / 'src/mainline'
     out = src / 'out'
     manifest = json.loads(selection.read_text())
+    compat = destination / 'libwakelock-no-suspend.so'
+    shutil.copyfile(work / 'sensors-compat/libwakelock-no-suspend.so', compat)
+    manifest['sensor_compat_sha256'] = sha256(compat)
     release = (out / 'include/config/kernel.release').read_text().strip()
     if release != manifest['version'] + '-s9plus':
         raise ValueError(f'Kernel release mismatch: {release}')
@@ -44,9 +48,10 @@ def main():
         target = modules / 'kernel' / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(out / relative, target)
-    for kind, name in [('audio', 'snd-zrn-abox.ko'), ('bluetooth', 'zrn-bt.ko')]:
+    for kind, name in [('audio', 'snd-zrn-abox.ko'), ('bluetooth', 'zrn-bt.ko'),
+                       ('sensors', 'zrn-bbd.ko'), ('sensors', 's9plus-sensor-iio.ko')]:
         target = modules / f'extra/s9plus-{kind}' / name
-        target.parent.mkdir(parents=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(work / f'{kind}-driver' / name, target)
     module_manifest = []
     for path in sorted(modules.rglob('*.ko')):
@@ -117,8 +122,9 @@ def main():
     # local draft changes when validating before a commit.
     subprocess.run(['tar', '-C', str(REPO), '--exclude=__pycache__',
                     '-I', 'zstd -T0 -3', '-cf', str(destination / 'port-build-source.tar.zst'),
-                    'scripts/build', 'scripts/ci', 'src/configs',
+                    'scripts/build', 'scripts/ci', 'src',
                     'experiments/audio/driver', 'experiments/bluetooth/driver',
+                    'experiments/sensors', 'experiments/cpuidle',
                     'experiments/bluetooth/patch-btbcm-s9plus.py',
                     'device/mainline-init-boot', 'device/mainline-extra-probe',
                     'bootloader/uniLoader', 'branding', 'firmware'], check=True)

@@ -39,6 +39,18 @@ def insert_after(path, anchor, text, marker):
     print(f"{path}: {marker} added")
 
 
+# --- Built-in conservative A55 idle; private architecture symbols stay local --
+insert_before(
+    "drivers/cpuidle/Kconfig.arm", "config ARM_CPUIDLE\n",
+    (Path(__file__).resolve().parents[2] / "src/cpuidle/Kconfig").read_text() + "\n",
+    "config S9PLUS_CPUIDLE\n",
+)
+insert_before(
+    "drivers/cpuidle/Makefile", "obj-$(CONFIG_ARM_CPUIDLE)",
+    (Path(__file__).resolve().parents[2] / "src/cpuidle/Makefile").read_text() + "\n",
+    "CONFIG_S9PLUS_CPUIDLE",
+)
+
 # --- UFS host driver for the Exynos 9810 -------------------------------------
 insert_after(
     "drivers/ufs/host/Makefile",

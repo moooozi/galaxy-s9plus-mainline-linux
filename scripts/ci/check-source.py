@@ -11,9 +11,11 @@ for directory in ('scripts', 'image', 'experiments', 'device'):
         if not path.is_file():
             continue
         if path.suffix == '.py' or path.name in ('s9plus-bluetooth', 's9plus-boot-errors',
-                                               's9plus-charging-generator', 's9plus-offline-charging'):
+                                               's9plus-charging-generator', 's9plus-offline-charging',
+                                               's9plus-sensorhub', 's9plus-sensord', 's9plus-cpuidle'):
             ast.parse(path.read_text(), filename=str(path))
-        elif path.suffix == '.sh' or path.name in ('s9plus-audio', 's9plus-plasma-display'):
+        elif path.suffix == '.sh' or path.name in ('s9plus-audio', 's9plus-plasma-display',
+                                                 's9plus-sensor-android-root'):
             subprocess.run(['bash', '-n', str(path)], check=True)
         elif path.suffix == '.json':
             json.loads(path.read_text())

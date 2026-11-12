@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0
+config S9PLUS_CPUIDLE
+	bool "Samsung Galaxy S9+ A55 CPU idle and MCT broadcast"
+	depends on ARM64 && ARCH_EXYNOS && ARM_PSCI_FW && CPU_IDLE && CPU_PM
+	depends on SMP && GENERIC_CLOCKEVENTS_BROADCAST
+	select CPU_IDLE_MULTIPLE_DRIVERS
+	help
+	  Board-specific legacy PSCI core powerdown for validated A55 CPUs 2/3,
+	  with a hardware MCT broadcast clockevent. Requires the star2lte suspend
+	  affinity correction. C2 is disabled initially; enable through the
+	  standard cpuidle sysfs interface after checking persistent boot guards.
+	  No cluster powerdown or system suspend support is provided.

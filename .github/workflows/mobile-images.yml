@@ -6,19 +6,8 @@ on:
         description: Rebuild GNOME Mobile packages instead of reusing the matching cache
         type: boolean
         default: false
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'scripts/build/**'
-      - 'scripts/ci/**'
-      - 'device/**'
-      - 'image/**'
-      - 'experiments/**'
-      - 'firmware/**'
-      - 'bootloader/**'
-      - 'branding/**'
-      - '.github/workflows/**'
+# Legacy Ubuntu builds remain available manually while Debian/postmarketOS
+# pipelines are prepared. Driver pushes must not launch obsolete image builds.
 permissions:
   contents: read
 concurrency:

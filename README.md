@@ -1,4 +1,12 @@
-# Ubuntu Mobile on the Galaxy S9+
+# Linux on the Galaxy S9+
+
+Development now targets Debian and postmarketOS, with full and embedding kernel
+variants and a separate kernel package repository. See the
+[November 12 plan](docs/new-plan.md). Driver integration and hardware testing
+come first; the new images and external repository are not implemented yet.
+
+The Ubuntu installation and build instructions below remain a reference for
+the existing hardware test system. Ubuntu image builds are now manual only.
 
 [![checks](https://github.com/moooozi/galaxy-s9plus-mainline-linux/actions/workflows/build.yml/badge.svg)](https://github.com/moooozi/galaxy-s9plus-mainline-linux/actions/workflows/build.yml)
 [![Mobile images](https://github.com/moooozi/galaxy-s9plus-mainline-linux/actions/workflows/mobile-images.yml/badge.svg)](https://github.com/moooozi/galaxy-s9plus-mainline-linux/actions/workflows/mobile-images.yml)
@@ -20,7 +28,7 @@ not stock desktop GNOME with a mobile theme.
 ## Build and download
 
 Run [Mobile images](https://github.com/moooozi/galaxy-s9plus-mainline-linux/actions/workflows/mobile-images.yml)
-in Actions, or push changes to main. Each successful image job uploads a bundle
+manually in Actions. Each successful image job uploads a bundle
 containing a compressed rootfs, matching uniLoader BOOT, checksums, package/kernel
 manifests and install instructions. Artifacts are retained for 30 days.
 No GitHub Release is created automatically. New workflows must be pushed and

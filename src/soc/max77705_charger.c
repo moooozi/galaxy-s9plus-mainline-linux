@@ -50,30 +50,35 @@ static enum power_supply_property max77705_charger_props[] = {
 static irqreturn_t max77705_aicl_irq(int irq, void *irq_drv_data)
 {
 	struct max77705_charger_data *chg = irq_drv_data;
-	unsigned int regval, irq_status;
+	unsigned int regval, irq_status, attempt;
 	int err;
 
 	err = regmap_read(chg->regmap, MAX77705_CHG_REG_INT_OK, &irq_status);
-	if (err < 0)
+	if (err)
 		return IRQ_HANDLED;
 
-	// irq is fiered at the end of current decrease sequence too
-	// early check AICL_I bit to guard against that excess irq call
-	while (!(irq_status & BIT(MAX77705_AICL_I))) {
+	/* AICL is active low. Bound the loop even if another writer keeps
+	 * raising the limit, and never wrap the seven-bit field at zero.
+	 */
+	for (attempt = 0; attempt < 128 && !(irq_status & BIT(MAX77705_AICL_I));
+	     attempt++) {
 		err = regmap_field_read(chg->rfield[MAX77705_CHG_CHGIN_LIM], &regval);
-		if (err < 0)
+		if (err)
 			return IRQ_HANDLED;
 
+		/* Codes 0..3 all select the minimum 100 mA input current. */
+		if (regval <= 3)
+			break;
 		regval--;
 
 		err = regmap_field_write(chg->rfield[MAX77705_CHG_CHGIN_LIM], regval);
-		if (err < 0)
+		if (err)
 			return IRQ_HANDLED;
 
 		msleep(AICL_WORK_DELAY_MS);
 
 		err = regmap_read(chg->regmap, MAX77705_CHG_REG_INT_OK, &irq_status);
-		if (err < 0)
+		if (err)
 			return IRQ_HANDLED;
 	}
 
@@ -166,13 +171,26 @@ static int max77705_get_online(struct regmap *regmap, int *val)
 	return 0;
 }
 
-static int max77705_set_integer(struct max77705_charger_data *chg, enum max77705_field_idx fidx,
-				unsigned int clamp_min, unsigned int clamp_max,
-				unsigned int div, int val)
+static int max77705_set_current(struct max77705_charger_data *chg,
+			       enum max77705_field_idx fidx, int val)
 {
 	unsigned int regval;
 
-	regval = clamp_val(val, clamp_min, clamp_max) / div;
+	if (fidx == MAX77705_CHG_CHGIN_LIM) {
+		/* Input limit codes 0..3 mean 100 mA; code N >= 4 is (N+1)*25 mA. */
+		regval = clamp_val(val, MAX77705_CURRENT_CHGIN_MIN,
+				   MAX77705_CURRENT_CHGIN_MAX) /
+			 MAX77705_CURRENT_CHGIN_STEP - 1;
+	} else if (fidx == MAX77705_CHG_CC_LIM) {
+		/* The charge-current field has only six bits: 3.2 A must not wrap
+		 * from code 64 to zero when regmap applies the field mask.
+		 */
+		regval = clamp_val(val, MAX77705_CURRENT_CHGIN_MIN,
+				   0x3f * MAX77705_CURRENT_CHG_STEP) /
+			 MAX77705_CURRENT_CHG_STEP;
+	} else {
+		return -EINVAL;
+	}
 
 	return regmap_field_write(chg->rfield[fidx], regval);
 }
@@ -182,12 +200,17 @@ static int max77705_check_battery(struct max77705_charger_data *chg, int *val)
 	unsigned int reg_data;
 	unsigned int reg_data2;
 	struct regmap *regmap = chg->regmap;
+	int ret;
 
-	regmap_read(regmap, MAX77705_CHG_REG_INT_OK, &reg_data);
+	ret = regmap_read(regmap, MAX77705_CHG_REG_INT_OK, &reg_data);
+	if (ret)
+		return ret;
 
 	dev_dbg(chg->dev, "CHG_INT_OK(0x%x)\n", reg_data);
 
-	regmap_read(regmap, MAX77705_CHG_REG_DETAILS_00, &reg_data2);
+	ret = regmap_read(regmap, MAX77705_CHG_REG_DETAILS_00, &reg_data2);
+	if (ret)
+		return ret;
 
 	dev_dbg(chg->dev, "CHG_DETAILS00(0x%x)\n", reg_data2);
 
@@ -213,7 +236,9 @@ static int max77705_get_charge_type(struct max77705_charger_data *chg, int *val)
 		return 0;
 	}
 
-	regmap_read(regmap, MAX77705_CHG_REG_DETAILS_01, &reg_data);
+	ret = regmap_read(regmap, MAX77705_CHG_REG_DETAILS_01, &reg_data);
+	if (ret)
+		return ret;
 	reg_data &= MAX77705_CHG_DTLS;
 
 	switch (reg_data) {
@@ -244,7 +269,9 @@ static int max77705_get_status(struct max77705_charger_data *chg, int *val)
 		return 0;
 	}
 
-	regmap_read(regmap, MAX77705_CHG_REG_DETAILS_01, &reg_data);
+	ret = regmap_read(regmap, MAX77705_CHG_REG_DETAILS_01, &reg_data);
+	if (ret)
+		return ret;
 	reg_data &= MAX77705_CHG_DTLS;
 
 	switch (reg_data) {
@@ -313,8 +340,11 @@ static int max77705_get_battery_health(struct max77705_charger_data *chg,
 {
 	struct regmap *regmap = chg->regmap;
 	unsigned int bat_dtls;
+	int ret;
 
-	regmap_read(regmap, MAX77705_CHG_REG_DETAILS_01, &bat_dtls);
+	ret = regmap_read(regmap, MAX77705_CHG_REG_DETAILS_01, &bat_dtls);
+	if (ret)
+		return ret;
 	bat_dtls = ((bat_dtls & MAX77705_BAT_DTLS) >> MAX77705_BAT_DTLS_SHIFT);
 
 	switch (bat_dtls) {
@@ -324,6 +354,7 @@ static int max77705_get_battery_health(struct max77705_charger_data *chg,
 		*value = POWER_SUPPLY_HEALTH_NO_BATTERY;
 		break;
 	case MAX77705_BATTERY_PREQUALIFICATION:
+		*value = POWER_SUPPLY_HEALTH_GOOD;
 		dev_dbg(chg->dev, "%s: battery is okay but its voltage is low(~VPQLB)\n",
 			__func__);
 		break;
@@ -368,9 +399,11 @@ static int max77705_get_input_current(struct max77705_charger_data *chg,
 					int *val)
 {
 	unsigned int reg_data;
-	int get_current = 0;
+	int get_current = 0, ret;
 
-	regmap_field_read(chg->rfield[MAX77705_CHG_CHGIN_LIM], &reg_data);
+	ret = regmap_field_read(chg->rfield[MAX77705_CHG_CHGIN_LIM], &reg_data);
+	if (ret)
+		return ret;
 
 	if (reg_data <= 3)
 		get_current = MAX77705_CURRENT_CHGIN_MIN;
@@ -386,8 +419,11 @@ static int max77705_get_charge_current(struct max77705_charger_data *chg,
 					int *val)
 {
 	unsigned int reg_data;
+	int ret;
 
-	regmap_field_read(chg->rfield[MAX77705_CHG_CC_LIM], &reg_data);
+	ret = regmap_field_read(chg->rfield[MAX77705_CHG_CC_LIM], &reg_data);
+	if (ret)
+		return ret;
 
 	*val = reg_data <= 0x2 ? MAX77705_CURRENT_CHGIN_MIN : reg_data * MAX77705_CURRENT_CHG_STEP;
 
@@ -413,9 +449,11 @@ static int max77705_get_float_voltage(struct max77705_charger_data *chg,
 					int *val)
 {
 	unsigned int reg_data = 0;
-	int voltage_mv;
+	int voltage_mv, ret;
 
-	regmap_field_read(chg->rfield[MAX77705_CHG_CV_PRM], &reg_data);
+	ret = regmap_field_read(chg->rfield[MAX77705_CHG_CV_PRM], &reg_data);
+	if (ret)
+		return ret;
 	voltage_mv = reg_data <= 0x04 ? reg_data * 50 + 4000 :
 					(reg_data - 4) * 10 + 4200;
 	*val = voltage_mv * 1000;
@@ -480,18 +518,10 @@ static int max77705_set_property(struct power_supply *psy,
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
-		err = max77705_set_integer(chg, MAX77705_CHG_CC_LIM,
-					   MAX77705_CURRENT_CHGIN_MIN,
-					   MAX77705_CURRENT_CHGIN_MAX,
-					   MAX77705_CURRENT_CHG_STEP,
-					   val->intval);
+		err = max77705_set_current(chg, MAX77705_CHG_CC_LIM, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
-		err = max77705_set_integer(chg, MAX77705_CHG_CHGIN_LIM,
-					   MAX77705_CURRENT_CHGIN_MIN,
-					   MAX77705_CURRENT_CHGIN_MAX,
-					   MAX77705_CURRENT_CHGIN_STEP,
-					   val->intval);
+		err = max77705_set_current(chg, MAX77705_CHG_CHGIN_LIM, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
 		switch (val->intval) {
@@ -616,10 +646,12 @@ static int max77705_charger_initialize(struct max77705_charger_data *chg)
 	/* MINVSYS 3.6V(default) */
 	if (info->voltage_max_design_uv < 0) {
 		dev_warn(chg->dev, "missing battery:voltage-max-design-microvolt\n");
-		max77705_set_float_voltage(chg, 4200000);
+		err = max77705_set_float_voltage(chg, 4200000);
 	} else {
-		max77705_set_float_voltage(chg, info->voltage_max_design_uv);
+		err = max77705_set_float_voltage(chg, info->voltage_max_design_uv);
 	}
+	if (err)
+		goto err;
 
 	err = regmap_field_write(chg->rfield[MAX77705_VCHGIN], MAX77705_VCHGIN_4_5);
 	if (err)
@@ -630,8 +662,10 @@ static int max77705_charger_initialize(struct max77705_charger_data *chg)
 		goto err;
 
 	/* Watchdog timer */
-	regmap_update_bits(regmap, MAX77705_CHG_REG_CNFG_00,
-				MAX77705_WDTEN_MASK, 0);
+	err = regmap_update_bits(regmap, MAX77705_CHG_REG_CNFG_00,
+				 MAX77705_WDTEN_MASK, 0);
+	if (err)
+		goto err;
 
 	/* VBYPSET=5.0V */
 	err = regmap_field_write(chg->rfield[MAX77705_VBYPSET], 0);

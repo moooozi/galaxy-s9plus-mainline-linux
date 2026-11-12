@@ -1,0 +1,95 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Bounded supervision of the phone's Broadcom firmware daemon.
+
+Derived from ztOS ztoscsf-sensorhub. A durable loading marker prevents a
+kernel fault during initialization becoming an automatic boot loop.
+"""
+import os
+from pathlib import Path
+import signal
+import socket
+import subprocess
+import time
+
+STATE = Path('/var/lib/s9plus-sensorhub')
+MARK = STATE / 'loading'
+READY = Path('/sys/class/sec/sensorhub/ready')
+
+
+def notify(message):
+    address = os.environ.get('NOTIFY_SOCKET')
+    if address:
+        if address.startswith('@'):
+            address = '\0' + address[1:]
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(address)
+            sock.sendall(message.encode())
+
+
+def main():
+    for target in ('sleep', 'suspend', 'hibernate', 'hybrid-sleep', 'suspend-then-hibernate'):
+        if Path(f'/etc/systemd/system/{target}.target').resolve() != Path('/dev/null'):
+            raise SystemExit('The lhd wakelock compatibility shim requires masked system sleep')
+    STATE.mkdir(parents=True, exist_ok=True)
+    if MARK.exists():
+        raise SystemExit(f'Previous sensor initialization did not finish. Inspect logs before removing {MARK}')
+    MARK.touch()
+    os.sync()
+    subprocess.run(['/usr/local/sbin/s9plus-sensor-android-root'], check=True)
+    subprocess.run(['modprobe', 'zrn-bbd'], check=True)
+    subprocess.run(['modprobe', 's9plus-sensor-iio'], check=True)
+    stopping = False
+
+    def stop(*_):
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    # The hub may still have readiness from an older daemon; reset while no
+    # reader/lhd owns the transport, then require a fresh firmware download.
+    Path('/sys/class/sec/sensorhub/reset').write_text('1\n')
+    def enter_android():
+        os.chroot('/run/s9plus-sensor-android')
+        os.chdir('/')
+
+    child = subprocess.Popen(['/vendor/bin/hw/lhd', '/vendor/etc/sensor/lhd.conf'],
+        preexec_fn=enter_android,
+        env=dict(os.environ, LD_LIBRARY_PATH='/vendor/lib64:/system/lib64',
+                 LD_PRELOAD='/compat/libwakelock-no-suspend.so'))
+    try:
+        deadline = time.monotonic() + 35
+        while not stopping:
+            if child.poll() is not None:
+                raise RuntimeError(f'lhd exited: {child.returncode}')
+            if READY.read_text().strip() == '1':
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError('sensor firmware did not become ready within 35 seconds')
+            time.sleep(0.25)
+        if stopping:
+            return
+        # Give asynchronous initialization faults time to appear before clearing
+        # the durable marker. No automatic restart/retry of failed hardware.
+        time.sleep(2)
+        if child.poll() is not None or READY.read_text().strip() != '1':
+            raise RuntimeError('sensor firmware failed after initialization')
+        MARK.unlink()
+        os.sync()
+        notify('READY=1\nSTATUS=BCM4773 firmware ready')
+        while not stopping:
+            if child.poll() is not None or READY.read_text().strip() != '1':
+                raise RuntimeError('sensor firmware lost readiness')
+            time.sleep(1)
+    finally:
+        child.terminate()
+        try:
+            child.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=2)
+
+
+if __name__ == '__main__':
+    main()

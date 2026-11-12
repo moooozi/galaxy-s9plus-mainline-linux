@@ -1,0 +1,14 @@
+[Unit]
+Description=Galaxy S9+ conservative A55 per-core CPU idle
+After=local-fs.target
+ConditionPathExists=!/etc/s9plus-cpuidle.disable
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/s9plus-cpuidle
+RemainAfterExit=yes
+TimeoutStartSec=30
+StateDirectory=s9plus-cpuidle
+
+[Install]
+WantedBy=multi-user.target

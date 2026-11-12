@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/Zerone-Laboratories/ztOS",
+  "commit": "7f42ddc3ba468e4e21c7145cbb973f5aa57d5358",
+  "files": [
+    {
+      "path": "devices/samsung-starlte/overlay/usr/local/sbin/zrn-cpuidle",
+      "sha256": "f12e1cb5e61300abaef9ce6f9f1c73d9308c115ab5a48ae34cbcec07bd788d34"
+    },
+    {
+      "path": "power/idle/zrn-idle.c",
+      "sha256": "ad1cb96919ea0f59e57414f879e929d414a5b416053033d3399afa9a25e0080e"
+    }
+  ]
+}

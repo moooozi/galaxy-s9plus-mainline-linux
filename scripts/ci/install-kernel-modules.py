@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -13,6 +14,15 @@ def install(root, artifact):
     artifact = Path(artifact).resolve()
     subprocess.run(['sha256sum', '-c', 'SHA256SUMS'], cwd=artifact, check=True)
     manifest = json.loads((artifact / 'kernel-manifest.json').read_text())
+    compat = artifact / 'libwakelock-no-suspend.so'
+    if hashlib.sha256(compat.read_bytes()).hexdigest() != manifest['sensor_compat_sha256']:
+        raise ValueError('Sensor compatibility library checksum mismatch')
+    destination = root / 'usr/local/lib/s9plus-sensors/compat/libwakelock-no-suspend.so'
+    if not destination.resolve().is_relative_to(root) or destination.is_symlink():
+        raise ValueError('Sensor compatibility destination escapes rootfs')
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(compat, destination)
+    destination.chmod(0o644)
     release = manifest['release']
     if '/' in release or release in ('.', '..'):
         raise ValueError('Invalid kernel release')
@@ -33,7 +43,6 @@ def install(root, artifact):
                 raise ValueError(f'Module destination escapes rootfs: {target}')
             target.parent.mkdir(parents=True, exist_ok=True)
             with archive.extractfile(member) as source, target.open('wb') as destination:
-                import shutil
                 shutil.copyfileobj(source, destination)
             target.chmod(0o644)
     expected = {entry['path'] for entry in manifest['modules']}
@@ -44,7 +53,8 @@ def install(root, artifact):
             if hashlib.file_digest(stream, 'sha256').hexdigest() != entry['sha256']:
                 raise ValueError(f'Module checksum mismatch: {entry["path"]}')
     subprocess.run(['chroot', str(root), 'depmod', '-a', release], check=True)
-    for module in ('fuse', 'snd-zrn-abox', 'hci_uart', 'zrn-bt'):
+    for module in ('fuse', 'snd-zrn-abox', 'hci_uart', 'zrn-bt', 'industrialio',
+                   'zrn-bbd', 's9plus-sensor-iio', 's9plus-cpuidle'):
         subprocess.run(['chroot', str(root), 'modprobe', '--set-version', release,
                         '--show-depends', module], check=True)
 

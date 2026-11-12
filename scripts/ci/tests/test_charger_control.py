@@ -33,11 +33,11 @@ enum { POWER_SUPPLY_STATUS_UNKNOWN, POWER_SUPPLY_STATUS_CHARGING,
        POWER_SUPPLY_STATUS_DISCHARGING, POWER_SUPPLY_STATUS_NOT_CHARGING,
        POWER_SUPPLY_STATUS_FULL };
 enum { POWER_SUPPLY_CHARGE_TYPE_NONE = 10, POWER_SUPPLY_CHARGE_TYPE_FAST };
-struct regmap { unsigned int registers[32]; int error; };
+struct regmap { unsigned int registers[32]; int error; int error_reg; };
 struct max77705_charger_data { struct regmap *regmap; };
 static int regmap_read(struct regmap *map, int reg, unsigned int *value)
 {
-    if (map->error) return map->error;
+    if (map->error || map->error_reg == reg) return -5;
     *value = map->registers[reg];
     return 0;
 }
@@ -76,6 +76,12 @@ int main(void)
     map.registers[4] = 4;
     assert(max77705_get_status(&chg, &value) == 0);
     assert(value == POWER_SUPPLY_STATUS_FULL);
+    /* A second read can fail after the mode read succeeds. */
+    map.error_reg = MAX77705_CHG_REG_DETAILS_01;
+    value = 12345;
+    assert(max77705_get_status(&chg, &value) == -5 && value == 12345);
+    assert(max77705_get_charge_type(&chg, &value) == -5 && value == 12345);
+    map.error_reg = 0;
     map.error = -5;
     assert(max77705_set_charging(&chg, false) == -5);
     assert(max77705_get_charging(&chg, &enabled) == -5);

@@ -159,6 +159,12 @@ in_chroot "$R" dconf update
 python3 "$REPO/scripts/ci/install-kernel-modules.py" "$R" "$KERNEL_DIR"
 copy_tree "$REPO/experiments/audio/rootfs" "$R"
 copy_tree "$REPO/experiments/bluetooth/rootfs" "$R"
+copy_tree "$REPO/experiments/sensors/rootfs" "$R"
+copy_tree "$REPO/experiments/cpuidle/rootfs" "$R"
+# A55 C2 and live IIO samples passed normal reboot verification. The reader
+# pulls in its guarded firmware service; do not start the hub independently.
+in_chroot "$R" systemctl disable s9plus-sensorhub.service
+in_chroot "$R" systemctl enable s9plus-cpuidle.service s9plus-sensors.service
 # Firmware and identity belong to the owner and are not included in public images.
 install -d "$R/etc/systemd/system/s9plus-bluetooth.service.d"
 cat > "$R/etc/systemd/system/s9plus-bluetooth.service.d/10-own-address.conf" <<'EOF'
