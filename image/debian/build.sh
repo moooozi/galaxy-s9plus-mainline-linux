@@ -1,9 +1,9 @@
 #!/bin/bash
-# Debian 13 headless image. Installs a released embedding package; no compiler.
+# Debian 13 headless image. Installs a released shared kernel package; no compiler.
 set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-work=${WORK:-$repo/.build/debian-embedding}
-out=${OUT:-$repo/dist/debian-embedding}
+work=${WORK:-$repo/.build/debian-headless}
+out=${OUT:-$repo/dist/debian-headless}
 root=$work/rootfs
 base=https://moooozi.github.io/galaxy-s9plus-kernel
 [ "$(id -u)" = 0 ] || { echo 'Run in the build container as root' >&2; exit 1; }
@@ -36,8 +36,8 @@ chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update
 chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive S9PLUS_IMAGE_BUILD=1 \
     apt-get install -y --no-install-recommends systemd-sysv dbus openssh-server sudo \
     network-manager avahi-daemon python3 kmod util-linux iproute2 iputils-ping \
-    ca-certificates locales tzdata bash linux-s9plus-embedding
-python3 "$repo/scripts/images/configure-rootfs.py" "$root" debian-embedding
+    ca-certificates locales tzdata bash linux-s9plus
+python3 "$repo/scripts/images/configure-rootfs.py" "$root" debian-headless
 chroot "$root" dpkg-query -W > "$out/package-manifest.txt"
 chroot "$root" apt-get clean
 rm -rf "$root/var/lib/apt/lists/"*
@@ -45,4 +45,4 @@ rm -rf "$root/var/lib/apt/lists/"*
 rm -f "$root/etc/resolv.conf"
 ln -s /run/NetworkManager/resolv.conf "$root/etc/resolv.conf"
 cleanup; mounts=()
-bash "$repo/scripts/images/finish-image.sh" "$root" "$out" debian-embedding
+bash "$repo/scripts/images/finish-image.sh" "$root" "$out" debian-headless

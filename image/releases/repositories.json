@@ -5,8 +5,8 @@
   "postmarketos_channel": "v26.06",
   "alpine_branch": "v3.24",
   "variants": {
-    "debian-embedding": {"distribution": "debian", "kernel": "embedding", "desktop": null},
-    "postmarketos-plasma": {"distribution": "postmarketos", "kernel": "full", "desktop": "plasma-mobile"},
-    "postmarketos-phosh": {"distribution": "postmarketos", "kernel": "full", "desktop": "phosh"}
+    "debian-headless": {"distribution": "debian", "kernel": "unified", "desktop": null},
+    "postmarketos-plasma": {"distribution": "postmarketos", "kernel": "unified", "desktop": "plasma-mobile"},
+    "postmarketos-phosh": {"distribution": "postmarketos", "kernel": "unified", "desktop": "phosh"}
   }
 }

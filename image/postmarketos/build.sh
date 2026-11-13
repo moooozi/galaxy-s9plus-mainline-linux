@@ -35,7 +35,7 @@ mount -t sysfs sysfs "$root/sys"; mounts=("$root/sys" "${mounts[@]}")
 # in the new root; the kernel hook explicitly stages BOOT during image builds.
 S9PLUS_IMAGE_BUILD=1 apk --root "$root" --arch aarch64 add --initdb \
     postmarketos-base postmarketos-base-systemd "postmarketos-ui-$ui" \
-    linux-s9plus-full python3 bash shadow sudo networkmanager networkmanager-wifi \
+    linux-s9plus python3 bash shadow sudo networkmanager networkmanager-wifi \
     avahi openssh-server-pam kmod util-linux alsa-utils bluez mesa-dri-gallium py3-pillow
 python3 "$repo/scripts/images/configure-rootfs.py" "$root" "$variant"
 chroot "$root" apk info -v > "$out/package-manifest.txt"

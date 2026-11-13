@@ -8,9 +8,9 @@ import sys
 
 root = Path(sys.argv[1]).resolve()
 variant = sys.argv[2]
-flavor = 'embedding' if variant == 'debian-embedding' else 'full'
+flavor = 'unified'
 manifest = json.loads((root / f'usr/share/s9plus-kernel/{flavor}/kernel-manifest.json').read_text())
-if manifest['variant'] != flavor or not manifest['release'].endswith('-s9plus-' + flavor):
+if manifest['variant'] != flavor or manifest['release'] != manifest['version'] + '-s9plus':
     raise ValueError('image/kernel variant mismatch')
 boot = root / f'usr/share/s9plus-kernel/{flavor}/boot-s9plus.img'
 if hashlib.file_digest(boot.open('rb'), 'sha256').hexdigest() != manifest['boot_sha256']:
@@ -30,11 +30,19 @@ if (root / 'var/lib/s9plus/first-boot-complete').exists():
     raise ValueError('first boot already ran in build environment')
 subprocess.run(['chroot', str(root), 'test', '-x', '/sbin/init'], check=True)
 subprocess.run(['chroot', str(root), 'test', '-x', '/usr/local/sbin/s9plus-first-boot'], check=True)
-for name in ('s9plus-first-boot.service','s9plus-cpuidle.service','usb-gadget.service'):
+for name in ('s9plus-first-boot.service','s9plus-cpuidle.service','usb-gadget.service','s9plus-battery-settings.service'):
     path = root / 'etc/systemd/system/multi-user.target.wants' / name
     if not path.is_symlink():
         raise ValueError('required service not enabled: ' + name)
-if flavor == 'embedding':
+desktop = variant != 'debian-headless'
+expected = {'start': 98, 'stop': 100} if desktop else {'start': 63, 'stop': 65}
+if json.loads((root / 'etc/s9plus/battery-preservation.json').read_text()) != expected:
+    raise ValueError('incorrect image charging defaults')
+if not desktop:
+    for name in ('s9plus-audio', 's9plus-bluetooth', 's9plus-sensorhub', 's9plus-sensors'):
+        path = root / f'etc/systemd/system/{name}.service'
+        if not path.is_symlink() or path.readlink() != Path('/dev/null'):
+            raise ValueError('headless hardware helper must remain masked: ' + name)
     packages = subprocess.check_output(['chroot', str(root), 'dpkg-query', '-W', '-f=${binary:Package}\n'], text=True).splitlines()
     forbidden = ('gnome-shell','plasma-mobile','phosh','gdm3','sddm','bluez','pipewire')
     if set(packages).intersection(forbidden):

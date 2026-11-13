@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [debian-embedding, postmarketos-plasma, postmarketos-phosh]
+        variant: [debian-headless, postmarketos-plasma, postmarketos-phosh]
     runs-on: ubuntu-26.04-arm
     timeout-minutes: 180
     steps:
@@ -27,7 +27,7 @@ jobs:
           VARIANT: ${{ matrix.variant }}
         run: mkdir -p "dist/$VARIANT"
       - name: Assemble Debian from released kernel packages
-        if: matrix.variant == 'debian-embedding'
+        if: matrix.variant == 'debian-headless'
         run: |
           docker run --privileged --rm -v "$PWD:/work" -w /work ubuntu:24.04 bash -ec '
             export DEBIAN_FRONTEND=noninteractive
@@ -37,7 +37,7 @@ jobs:
             bash image/debian/build.sh
           '
       - name: Assemble postmarketOS from released kernel packages
-        if: matrix.variant != 'debian-embedding'
+        if: matrix.variant != 'debian-headless'
         env:
           VARIANT: ${{ matrix.variant }}
         run: |

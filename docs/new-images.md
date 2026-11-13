@@ -5,9 +5,9 @@ from signed package repositories; it does not compile a kernel:
 
 | Image | Distribution | Desktop | Kernel |
 | --- | --- | --- | --- |
-| `debian-embedding` | Debian 13 (trixie) | None | embedding |
-| `postmarketos-plasma` | postmarketOS v26.06 / Alpine v3.24 | Plasma Mobile | full |
-| `postmarketos-phosh` | postmarketOS v26.06 / Alpine v3.24 | Phosh | full |
+| `debian-headless` | Debian 13 (trixie) | None | shared |
+| `postmarketos-plasma` | postmarketOS v26.06 / Alpine v3.24 | Plasma Mobile | shared |
+| `postmarketos-phosh` | postmarketOS v26.06 / Alpine v3.24 | Phosh | shared |
 
 Kernel ownership/release CI is in
 [moooozi/galaxy-s9plus-kernel](https://github.com/moooozi/galaxy-s9plus-kernel).
@@ -54,8 +54,9 @@ modify only a regular ext4 image file, not the connected phone.
 
 ## Battery policy
 
-Embedding defaults to stop 65% / resume 63%. Full defaults to no added limit
-(stop 100%). Both provide configurable, persistent preservation:
+Headless Debian defaults to stop 65% / resume 63%. Both mobile images default
+to no added limit (stop 100%). All use the same `linux-s9plus` kernel package
+and provide configurable, persistent preservation:
 
 ```
 sudo s9plus-battery-preservation --stop 80 --start 78
@@ -63,7 +64,9 @@ sudo s9plus-battery-preservation --stop 65
 sudo s9plus-battery-preservation --stop 100
 ```
 
-Saved settings survive reboot and package updates. The kernel also exposes the
+Saved settings survive reboot and package updates. The common kernel starts
+without an added limit; saved image policy applies during userspace boot, not
+in early boot or recovery. The kernel also exposes the
 standard power-supply threshold attributes. No desktop settings panel is added
 by this change; the command is available in either desktop's terminal. Firmware
 charge termination and thermal protection remain separate from this polling
@@ -87,5 +90,6 @@ do not validate Debian/postmarketOS desktop behavior.
 The sensor runtime still requires the owner's existing SYSTEM/VENDOR contents;
 audio firmware and Bluetooth identity are not embedded from the owner's phone.
 Sleep targets remain masked because deeper CPU/system suspend is unvalidated and
-the sensor shim requires that restriction. Removing DRM from embedding does not
-prove that the S-Boot-initialized display is off or that standby improves.
+the sensor shim requires that restriction. Debian masks optional audio, Bluetooth and sensor services, while retaining
+the common graphics driver. Headless panel shutdown and standby consumption
+still need hardware testing; no power improvement is claimed.

@@ -20,10 +20,10 @@ def install_file(root, source, target=None, mode=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('root', type=Path)
-    parser.add_argument('variant', choices=('debian-embedding','postmarketos-plasma','postmarketos-phosh'))
+    parser.add_argument('variant', choices=('debian-headless','postmarketos-plasma','postmarketos-phosh'))
     args = parser.parse_args()
     root = args.root.resolve()
-    desktop = args.variant != 'debian-embedding'
+    desktop = args.variant != 'debian-headless'
     overlay = REPO / 'image/debian/rootfs'
     for source in overlay.rglob('*'):
         if source.is_file():
@@ -55,6 +55,16 @@ def main():
     (root / 'etc/machine-info').write_text('CHASSIS=' + ('handset' if desktop else 'embedded') + '\n')
     cfg = root / 'etc/s9plus'
     cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / 'battery-preservation.json').write_text(json.dumps(
+        {'start': 98, 'stop': 100} if desktop else {'start': 63, 'stop': 65}) + '\n')
+    if not desktop:
+        # Keep the common package's optional hardware helpers inactive.
+        for name in ('s9plus-audio', 's9plus-bluetooth', 's9plus-sensorhub', 's9plus-sensors'):
+            path = root / f'etc/systemd/system/{name}.service'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.unlink(missing_ok=True)
+            path.symlink_to('/dev/null')
+        (root / 'etc/s9plus-sensors.disable').touch()
     if desktop:
         (cfg / 'first-boot.json').write_text(json.dumps({'user':'user','fallback_password':'147147','force_password_change':False})+'\n')
         (cfg / 'first-boot.json').chmod(0o600)

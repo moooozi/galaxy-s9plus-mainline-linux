@@ -5,11 +5,10 @@ out=$2
 variant=$3
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 mkdir -p "$out"
-kernel=full
-[ "$variant" != debian-embedding ] || kernel=embedding
+kernel=unified
 cp "$root/usr/share/s9plus-kernel/$kernel/boot-s9plus.img" "$out/boot-s9plus.img"
 cp "$root/usr/share/s9plus-kernel/$kernel/kernel-manifest.json" "$out/kernel-manifest.json"
-# Confirm installed modules and staged BOOT belong to this variant.
+# Confirm installed modules and staged BOOT belong to the shared kernel.
 python3 "$repo/scripts/images/validate-rootfs.py" "$root" "$variant"
 rm -f "$root/usr/sbin/policy-rc.d" "$root/usr/bin/qemu-aarch64-static"
 : > "$root/etc/machine-id"
