@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Ubuntu for Galaxy S9+
+Description=Samsung Galaxy S9+ artwork above center with Ubuntu at the bottom
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/s9plus-ubuntu
+ScriptFile=/usr/share/plymouth/themes/s9plus-ubuntu/s9plus-ubuntu.script

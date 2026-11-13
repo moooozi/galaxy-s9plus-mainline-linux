@@ -172,9 +172,19 @@ static const color level_color[] = {
 	[KERN_DEBUG]	= {128, 128, 128, 255},
 };
 static const color body_color = {128, 128, 128, 255};
+#ifdef CONFIG_SIMPLE_FB_PRESERVE_CONTENTS
+static int console_needs_clear;
+#endif
 
 static void simplefb_console_write(int level, const char *prefix, const char *msg)
 {
+#ifdef CONFIG_SIMPLE_FB_PRESERVE_CONTENTS
+	if (console_needs_clear) {
+		clean_fbmem(fb_info->address, fb_info->width, fb_info->height,
+			    fb_info->stride);
+		console_needs_clear = 0;
+	}
+#endif
 	color pc = (level >= 0 && level < (int)ARRAY_SIZE(level_color)) ?
 		level_color[level] : (color){255, 255, 255, 255};
 	int prefix_width = strlen(prefix) * FONTW * get_font_scale_factor();
@@ -191,8 +201,12 @@ static int simplefb_probe(void *data)
 {
 	fb_info = data;
 
+#ifdef CONFIG_SIMPLE_FB_PRESERVE_CONTENTS
+	console_needs_clear = 1;
+#else
 	clean_fbmem((char*)fb_info->address, fb_info->width, fb_info->height,
 		 fb_info->stride);
+#endif
 
 	fb_info->scale_f = get_font_scale_factor();
 

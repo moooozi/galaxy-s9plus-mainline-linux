@@ -11,9 +11,8 @@
 #   * it keeps its own structures at 0x80000000 (sec_debug_magic,
 #     kaslr_region), right where a kernel loaded by its text_offset lands.
 #
-# uniLoader sets the trigger, relocates the kernel to 0x90000000, and jumps
-# there -- and prints to the panel on the way, which finally gives this port a
-# console.
+# uniLoader sets the trigger, relocates the kernel to 0x92000000, and jumps
+# there. The star2lte config preserves firmware artwork and prints only errors.
 #
 # Runs in Ubuntu-24.04: that is the distro with the cross toolchain. The build
 # is staged into the distro's own filesystem because Kbuild cannot cope with

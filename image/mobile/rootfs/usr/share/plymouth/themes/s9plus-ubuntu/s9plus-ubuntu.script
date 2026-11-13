@@ -1,0 +1,31 @@
+# Exact crop of the phone's original Samsung / Galaxy S9+ artwork.
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+samsung_image = Image("samsung-boot-logo.png");
+ubuntu_image = Image("ubuntu-wordmark.png");
+samsung_sprite = Sprite();
+ubuntu_sprite = Sprite();
+last_width = 0;
+last_height = 0;
+
+fun position_logos ()
+{
+    width = Window.GetWidth();
+    height = Window.GetHeight();
+    if (width == last_width && height == last_height) return;
+    last_width = width;
+    last_height = height;
+    logo_width = width * 0.75;
+    logo_height = samsung_image.GetHeight() * logo_width / samsung_image.GetWidth();
+    scaled_samsung = samsung_image.Scale(logo_width, logo_height);
+    samsung_sprite.SetImage(scaled_samsung);
+    samsung_sprite.SetX((width - scaled_samsung.GetWidth()) / 2);
+    # Match the original boot layout with the artwork slightly above center.
+    samsung_sprite.SetY(height * 0.42 - scaled_samsung.GetHeight() / 2);
+    ubuntu_sprite.SetImage(ubuntu_image);
+    ubuntu_sprite.SetX((width - ubuntu_image.GetWidth()) / 2);
+    ubuntu_sprite.SetY((height - ubuntu_image.GetHeight()) * 0.96);
+}
+
+position_logos();
+Plymouth.SetRefreshFunction(position_logos);

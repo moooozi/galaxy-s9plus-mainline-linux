@@ -26,10 +26,19 @@ be built locally with `scripts/ci/install-mobile-firefox.py OUTPUT.deb`; optiona
 
 Mobile kernel builds use the Ubuntu wordmark instead of the port author's logo.
 `branding/ubuntu-logo-source.md` records the original Ubuntu asset. The Ubuntu
-Plymouth spinner theme takes over in userspace; both desktops use the same theme.
+Plymouth theme `s9plus-ubuntu` takes over in userspace. Both desktops use the
+same Samsung / Galaxy S9+ artwork cropped to 984×296, removing the surrounding
+black borders while preserving every retained source pixel. It occupies 75% of
+the panel width, centered horizontally with its center at 42% of screen height.
+Ubuntu’s packaged wordmark stays small near the bottom. This recreates an EFI-style layout on
+uniLoader; it does not add EFI/BGRT support. Knox and Android remain excluded.
+No image generation or redrawing is used.
 
 The mobile kernel command line selects `quiet splash loglevel=4` and
-`systemd.show_status=error`. Routine initramfs messages go to the kernel log,
+`systemd.show_status=false systemd.log_target=journal-or-kmsg`. Systemd logs
+remain available in the journal, while routine status updates are hidden.
+uniLoader uses error-only output and preserves firmware artwork until Linux;
+the small kernel console logo is suppressed in favor of the Plymouth artwork. Routine initramfs messages go to the kernel log,
 and `/var/log/s9p-boot.log` still records the full boot diagnostics. Missing
 storage, mount/init failure and rescue-shell errors are explicitly printed to
 the console. `s9plus-boot-errors.service` watches this boot's error-priority

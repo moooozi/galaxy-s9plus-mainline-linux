@@ -59,7 +59,7 @@
 		 * hands the kernel this device tree instead, so /chosen here
 		 * is finally the one the kernel reads.
 		 */
-		bootargs = "console=tty0 loglevel=8 earlycon keep_bootcon ignore_loglevel panic=10";
+		bootargs = "console=tty0 quiet splash loglevel=4 systemd.show_status=false systemd.log_target=journal-or-kmsg vt.global_cursor_default=0 logo.nologo=1 panic=10";
 
 		framebuffer@cc000000 {
 			compatible = "simple-framebuffer";

@@ -112,6 +112,13 @@ def main():
         raise ValueError('Invalid or oversized BOOT image')
     shutil.copyfile(boot, destination / 'boot-s9plus.img')
     shutil.copyfile(out / '.config', destination / 'kernel.config')
+    loader_config = REPO / 'dist/uniloader/uniLoader.config'
+    loader_settings = loader_config.read_text().splitlines()
+    for required in ('CONFIG_LOGLEVEL=3', 'CONFIG_SIMPLE_FB_PRESERVE_CONTENTS=y'):
+        if required not in loader_settings:
+            raise ValueError('quiet loader setting missing: ' + required)
+    shutil.copyfile(loader_config, destination / 'loader.config')
+    manifest['loader_config_sha256'] = sha256(destination / 'loader.config')
     manifest.update(release=release, modules=module_manifest, boot_sha256=sha256(boot),
                     port_commit=subprocess.check_output(['git', '-c', f'safe.directory={REPO}', '-C', str(REPO), 'rev-parse', 'HEAD'], text=True).strip())
     (destination / 'kernel-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')

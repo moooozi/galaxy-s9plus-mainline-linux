@@ -5,6 +5,14 @@ menu "Libraries"
 		help
 		  Say Y if you want to have Framebuffer output.
 
+	config SIMPLE_FB_PRESERVE_CONTENTS
+		bool "Preserve firmware framebuffer until the first console message"
+		depends on SIMPLE_FB
+		default n
+		help
+		  Keep the firmware artwork during a quiet boot. Clear it before
+		  the first visible message so errors remain readable.
+
 	config EARLYCON
 		bool "Support for UART early console"
 		default n
