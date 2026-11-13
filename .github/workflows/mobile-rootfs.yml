@@ -14,15 +14,15 @@ jobs:
     env:
       VARIANT: ${{ inputs.variant }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate variant
         run: |
           case "$VARIANT" in kde|gnome) ;; *) exit 1 ;; esac
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: s9plus-kernel
           path: .build/inputs/kernel
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: inputs.variant == 'gnome'
         with:
           name: gnome-mobile-packages
@@ -43,7 +43,7 @@ jobs:
           sha256sum -c SHA256SUMS
           zstd -t s9plus-rootfs.img.zst
       - name: Upload installable image bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: s9plus-${{ inputs.variant }}-mobile
           path: dist/${{ inputs.variant }}-mobile/
@@ -52,7 +52,7 @@ jobs:
           retention-days: 30
       - name: Failure log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.variant }}-mobile-failure-log
           path: /tmp/mobile-image.log

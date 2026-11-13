@@ -1,0 +1,22 @@
+name: Import owner signing key
+description: Import an isolated GPG key and verify the configured signing fingerprint/passphrase
+inputs:
+  private-key:
+    description: Armored or base64-encoded private key
+    required: true
+  passphrase:
+    description: Private-key passphrase
+    required: true
+  fingerprint:
+    description: Exact primary or signing-subkey fingerprint
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Import key and verify signing
+      shell: bash
+      env:
+        GPG_PRIVATE_KEY: ${{ inputs.private-key }}
+        GPG_PASSPHRASE: ${{ inputs.passphrase }}
+        GPG_SIGNING_KEY_FINGERPRINT: ${{ inputs.fingerprint }}
+      run: python3 "$GITHUB_ACTION_PATH/import-key.py"

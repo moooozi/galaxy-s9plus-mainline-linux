@@ -1,0 +1,13 @@
+[connection]
+id=s9plus-usb
+uuid=8a4855ca-8112-413e-bb2d-1d5160fdc047
+type=ethernet
+interface-name=usb0
+autoconnect=true
+[ethernet]
+[ipv4]
+method=auto
+address1=172.16.42.2/24
+may-fail=true
+[ipv6]
+method=auto

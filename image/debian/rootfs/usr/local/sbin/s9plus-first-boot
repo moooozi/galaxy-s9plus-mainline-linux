@@ -1,0 +1,87 @@
+#!/usr/bin/python3
+"""Apply image-local account data once, before sshd starts; no private keys."""
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import secrets
+import subprocess
+import tempfile
+
+CONFIG = Path('/etc/s9plus/first-boot.json')
+MARKER = Path('/var/lib/s9plus/first-boot-complete')
+
+
+def validate(config):
+    user = config.get('user', 'debian')
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,30}', user) or user in ('root', 'nobody'):
+        raise ValueError('invalid normal username')
+    keys = config.get('ssh_authorized_keys', [])
+    if not isinstance(keys, list) or not all(isinstance(k, str) and '\n' not in k and '\r' not in k for k in keys):
+        raise ValueError('SSH keys must be individual lines')
+    for key in keys:
+        if not re.match(r'^(ssh-ed25519|ssh-rsa|ecdsa-sha2-\S+|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-\S+) ', key):
+            raise ValueError('expected a public SSH key, without authorized_keys options')
+        with tempfile.NamedTemporaryFile(mode='w') as stream:
+            stream.write(key + '\n')
+            stream.flush()
+            subprocess.run(['ssh-keygen', '-l', '-f', stream.name], check=True, stdout=subprocess.DEVNULL)
+    password_hash = config.get('password_hash')
+    if password_hash is not None and (not isinstance(password_hash, str) or not re.fullmatch(r'\$(6|y)\$[^:\r\n]+', password_hash)):
+        raise ValueError('password_hash must be a SHA512/yescrypt crypt hash')
+    return user, keys, password_hash
+
+
+def main():
+    if MARKER.exists():
+        return
+    config = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
+    user, keys, password_hash = validate(config)
+    try:
+        account = pwd.getpwnam(user)
+        if account.pw_uid < 1000:
+            raise ValueError('refusing to configure a system account')
+    except KeyError:
+        subprocess.run(['useradd', '--create-home', '--shell', '/bin/bash', user], check=True)
+        account = pwd.getpwnam(user)
+    # Debian uses sudo; postmarketOS uses wheel.
+    import grp
+    for group in ('sudo', 'wheel', 'audio', 'video', 'render', 'input', 'netdev', 'plugdev'):
+        try:
+            grp.getgrnam(group)
+        except KeyError:
+            continue
+        subprocess.run(['usermod', '-aG', group, user], check=True)
+    fallback = password_hash is None and not keys
+    if password_hash:
+        subprocess.run(['chpasswd', '-e'], input=f'{user}:{password_hash}\n', text=True, check=True)
+    else:
+        password = config.get('fallback_password', 'debian') if fallback else secrets.token_urlsafe(48)
+        if not isinstance(password, str) or not password or any(c in password for c in ':\n\r'):
+            raise ValueError('invalid fallback password')
+        subprocess.run(['chpasswd'], input=f'{user}:{password}\n', text=True, check=True)
+    if keys:
+        ssh = Path(account.pw_dir) / '.ssh'
+        ssh.mkdir(mode=0o700, exist_ok=True)
+        ssh.chmod(0o700)
+        authorized = ssh / 'authorized_keys'
+        authorized.write_text('\n'.join(keys) + '\n')
+        authorized.chmod(0o600)
+        for path in (ssh, authorized):
+            os.chown(path, account.pw_uid, account.pw_gid)
+    ssh_config = Path('/etc/ssh/sshd_config.d/00-s9plus-auth.conf')
+    ssh_config.parent.mkdir(parents=True, exist_ok=True)
+    ssh_config.write_text('PermitRootLogin no\nPermitEmptyPasswords no\n' +
+        ('PasswordAuthentication no\nKbdInteractiveAuthentication no\n' if keys and not password_hash else 'PasswordAuthentication yes\n'))
+    if fallback and config.get('force_password_change', True):
+        subprocess.run(['chage', '-d', '0', user], check=True)
+    subprocess.run(['ssh-keygen', '-A'], check=True)
+    MARKER.parent.mkdir(parents=True, exist_ok=True)
+    MARKER.write_text('Configured local account: ' + user + '\n')
+    if CONFIG.exists():
+        CONFIG.unlink()  # Remove the bootstrap password/hash once applied.
+
+
+if __name__ == '__main__':
+    main()

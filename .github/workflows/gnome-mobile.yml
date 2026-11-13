@@ -18,11 +18,11 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Restore the matching successful package build
         id: cache
         if: ${{ !inputs.rebuild }}
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: dist/gnome-mobile-packages
           key: gnome-stonking-arm64-v1-${{ hashFiles('image/gnome-mobile/**', 'scripts/ci/build-gnome-mobile.py', 'scripts/ci/fetch-locked-source.py') }}-${{ github.run_id }}
@@ -42,12 +42,12 @@ jobs:
         run: cd dist/gnome-mobile-packages && sha256sum -c SHA256SUMS
       - name: Cache only a complete verified build
         if: steps.cache.outputs.cache-matched-key == ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: dist/gnome-mobile-packages
           key: gnome-stonking-arm64-v1-${{ hashFiles('image/gnome-mobile/**', 'scripts/ci/build-gnome-mobile.py', 'scripts/ci/fetch-locked-source.py') }}-${{ github.run_id }}
       - name: Packages, corresponding source and build provenance
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gnome-mobile-packages
           path: dist/gnome-mobile-packages/
@@ -56,7 +56,7 @@ jobs:
           retention-days: 30
       - name: Failure log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gnome-mobile-failure-log
           path: /tmp/gnome-mobile.log

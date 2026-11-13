@@ -1,0 +1,11 @@
+[Unit]
+Description=Configure Galaxy S9+ account and unique SSH host keys
+After=local-fs.target
+Before=ssh.service sshd.service
+ConditionPathExists=!/var/lib/s9plus/first-boot-complete
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/s9plus-first-boot
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target

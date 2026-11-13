@@ -1,0 +1,69 @@
+name: Debian and postmarketOS images
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: distribution-images-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [debian-embedding, postmarketos-plasma, postmarketos-phosh]
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - name: Import owner GPG signing key
+        uses: ./.github/actions/gpg-signing
+        with:
+          private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          fingerprint: ${{ vars.GPG_SIGNING_KEY_FINGERPRINT }}
+      - name: Prepare runner-owned output directory
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: mkdir -p "dist/$VARIANT"
+      - name: Assemble Debian from released kernel packages
+        if: matrix.variant == 'debian-embedding'
+        run: |
+          docker run --privileged --rm -v "$PWD:/work" -w /work ubuntu:24.04 bash -ec '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends debootstrap debian-archive-keyring \
+              e2fsprogs zstd python3 ca-certificates
+            bash image/debian/build.sh
+          '
+      - name: Assemble postmarketOS from released kernel packages
+        if: matrix.variant != 'debian-embedding'
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          docker run --privileged --rm -v "$PWD:/work" -w /work -e VARIANT alpine:3.24 sh -ec '
+            apk add --no-cache bash python3 e2fsprogs e2fsprogs-extra zstd
+            bash image/postmarketos/build.sh "$VARIANT"
+          '
+      - name: Verify image bundle
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          (cd "dist/$VARIANT" && sha256sum -c SHA256SUMS)
+          zstd -t "dist/$VARIANT/s9plus-rootfs.img.zst"
+      - name: Sign image checksums
+        env:
+          VARIANT: ${{ matrix.variant }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          "$GPG_SIGNING_WRAPPER" --armor --detach-sign --output "dist/$VARIANT/SHA256SUMS.asc" "dist/$VARIANT/SHA256SUMS"
+          cp "$GPG_PUBLIC_KEY_FILE" "dist/$VARIANT/signing-key.asc"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: s9plus-${{ matrix.variant }}
+          path: dist/${{ matrix.variant }}/
+          compression-level: 0
+          retention-days: 30
+      - name: Remove ephemeral GPG keyring
+        if: always()
+        run: python3 .github/actions/gpg-signing/cleanup.py

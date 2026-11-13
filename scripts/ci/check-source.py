@@ -19,6 +19,6 @@ for directory in ('scripts', 'image', 'experiments', 'device'):
             subprocess.run(['bash', '-n', str(path)], check=True)
         elif path.suffix == '.json':
             json.loads(path.read_text())
-for directory in ('scripts/ci/tests', 'scripts/flash/tests'):
+for directory in ('scripts/ci/tests', 'scripts/flash/tests', 'scripts/images/tests'):
     subprocess.run(['python3', '-m', 'unittest', 'discover', '-s', directory, '-v'], cwd=REPO, check=True)
 print('Source syntax and regression checks passed')
